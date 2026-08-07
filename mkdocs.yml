@@ -75,6 +75,7 @@ nav:
     - Notifications: architecture/notifications.md
   - Deployment:
     - Docker: deployment/docker.md
+    - Oracle Cloud: deployment/oracle-cloud.md
     - Fly.io: deployment/flyio.md
   - Contributing:
     - Guide: contributing/guide.md

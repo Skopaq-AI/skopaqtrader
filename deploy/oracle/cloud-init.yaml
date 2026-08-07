@@ -1,0 +1,111 @@
+#cloud-config
+#
+# SkopaqTrader — first-boot configuration for the OCI Always Free ARM box.
+#
+# Passed to `oci compute instance launch` as base64 user_data by provision.sh.
+# Runs once, as root, before the first login.  Watch it with:
+#
+#   cloud-init status --wait
+#   sudo tail -f /var/log/cloud-init-output.log
+#
+# Deliberately does NOT build or start the stack — that needs secrets, which
+# never travel through instance metadata.  bootstrap.sh does that after you
+# have scp'd .env across.
+
+# IST throughout, so the daemon timer's "Mon-Fri 09:10" means 09:10 IST without
+# any UTC arithmetic. The old Railway cron had to be written as 03:40 UTC.
+timezone: Asia/Kolkata
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - jq
+  - unattended-upgrades
+
+# 2 GB swap. 12 GB of RAM is ample at runtime, but `docker build` of the
+# langchain/pandas dependency tree on 2 ARM cores can spike hard, and an OOM
+# kill halfway through a 20-minute ARM build is a miserable way to find out.
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
+write_files:
+  # Cap journal growth — the 100 GB boot volume is Always Free, but a chatty
+  # daemon logging every scanner cycle will happily eat it over months.
+  - path: /etc/systemd/journald.conf.d/99-skopaq.conf
+    content: |
+      [Journal]
+      SystemMaxUse=2G
+      MaxRetentionSec=1month
+
+  # Docker's default json-file driver never rotates. Without this, container
+  # logs grow without bound.
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "50m",
+          "max-file": "3"
+        }
+      }
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  # ── Docker CE from the official repo ──────────────────────────────────────
+  # Ubuntu's packaged docker.io lags badly and has no compose v2 plugin.
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y
+      docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+
+  # ── Application layout ────────────────────────────────────────────────────
+  #   /opt/skopaq/.env         secrets, scp'd in later, never in git
+  #   /opt/skopaq/data         Kite tokens, HF model cache (mirrors Fly's /data)
+  #   /opt/skopaq/logs         daemon session logs
+  #   /opt/skopaq/skopaqtrader the checkout
+  - mkdir -p /opt/skopaq/data /opt/skopaq/logs
+  - git clone https://github.com/samuelvinay91/skopaqtrader.git /opt/skopaq/skopaqtrader
+  - chown -R ubuntu:ubuntu /opt/skopaq
+
+  # Placeholder so `scp .env ...` lands on a file with sane permissions rather
+  # than creating a world-readable one.
+  - install -o ubuntu -g ubuntu -m 600 /dev/null /opt/skopaq/.env
+
+  # ── Host firewall ─────────────────────────────────────────────────────────
+  # OCI Ubuntu images ship a restrictive iptables INPUT chain *in addition to*
+  # the VCN security list — both must allow a port before traffic reaches a
+  # container. We only need SSH (already permitted by the image's default
+  # rules), so nothing is opened here. Opening a port later means editing the
+  # security list AND this chain; see docs/deployment/oracle-cloud.md.
+  - netfilter-persistent save || true
+
+  - systemctl restart systemd-journald
+
+final_message: |
+  SkopaqTrader host ready after $UPTIME seconds.
+
+  Docker installed, repo cloned to /opt/skopaq/skopaqtrader, timezone Asia/Kolkata.
+  Nothing is running yet — that needs secrets.
+
+  Next:
+    scp .env ubuntu@<this-ip>:/opt/skopaq/.env
+    ssh ubuntu@<this-ip> 'cd /opt/skopaq/skopaqtrader && ./deploy/oracle/bootstrap.sh'

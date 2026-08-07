@@ -1,0 +1,33 @@
+# SkopaqTrader — long-running services (API + Telegram bot).
+#
+# Installed by deploy/oracle/bootstrap.sh. Brings the compose stack up at boot
+# and takes it down cleanly on shutdown.
+#
+#   systemctl status skopaq
+#   systemctl restart skopaq
+
+[Unit]
+Description=SkopaqTrader stack (API + Telegram)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+Group=docker
+WorkingDirectory=/opt/skopaq/skopaqtrader
+
+Environment=COMPOSE_FILE=/opt/skopaq/skopaqtrader/deploy/oracle/docker-compose.oci.yml
+
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+# The first boot after a rebuild can pull and start several containers on two
+# ARM cores; the 5-minute default is not always enough.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

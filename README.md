@@ -673,6 +673,7 @@ docker compose up -d   # Starts API + Telegram bot
 
 | Service | Config | Purpose |
 |---------|--------|---------|
+| **Oracle Cloud** | [`deploy/oracle/`](deploy/oracle/) | Always Free ARM box — API + Telegram + daemon timer on one host |
 | **Railway** (API) | [`railway.toml`](railway.toml) | FastAPI backend server |
 | **Railway** (Daemon) | [`railway-daemon.toml`](railway-daemon.toml) | Autonomous trading cron (09:10 IST, weekdays) |
 | **Vercel** | `frontend/` | Next.js dashboard |

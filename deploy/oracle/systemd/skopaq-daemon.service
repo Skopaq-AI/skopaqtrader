@@ -1,0 +1,35 @@
+# SkopaqTrader — one autonomous trading session.
+#
+# The direct replacement for the Railway cron service (railway-daemon.toml),
+# which ran `skopaq daemon --once` at 03:40 UTC. Triggered by
+# skopaq-daemon.timer; can also be fired by hand:
+#
+#   sudo systemctl start skopaq-daemon.service
+#   journalctl -u skopaq-daemon.service -f
+
+[Unit]
+Description=SkopaqTrader autonomous trading session (one shot)
+Requires=docker.service
+After=docker.service skopaq.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=docker
+WorkingDirectory=/opt/skopaq/skopaqtrader
+
+Environment=COMPOSE_FILE=/opt/skopaq/skopaqtrader/deploy/oracle/docker-compose.oci.yml
+
+# --rm so each session leaves no stopped container behind. The `batch` profile
+# is what keeps this service out of `docker compose up -d`.
+ExecStart=/usr/bin/docker compose --profile batch run --rm daemon
+
+# A full session is pre-open through close. Cap it well past a normal run so a
+# wedged session cannot survive into the next trading day, but never mid-run.
+TimeoutStartSec=8h
+
+# No Restart= on purpose. A trading session that died halfway through should be
+# investigated, not silently re-run against a market that has since moved.
+
+[Install]
+WantedBy=multi-user.target

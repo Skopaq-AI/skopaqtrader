@@ -1,0 +1,34 @@
+# SkopaqTrader — daily trading session schedule.
+#
+# Fires skopaq-daemon.service at 09:10 IST on weekdays, five minutes before the
+# NSE open at 09:15, matching what railway-daemon.toml did with "40 3 * * 1-5".
+#
+# Written in local time because cloud-init sets the host to Asia/Kolkata — no
+# UTC conversion to get wrong twice a year.
+#
+#   systemctl list-timers skopaq-daemon.timer
+#
+# Note: this fires on every weekday including NSE trading holidays. The
+# in-app calendar check (skopaq/risk/calendar.py) is what decides a holiday is
+# a no-op, so holiday handling stays in one place rather than being duplicated
+# in a systemd unit that nobody remembers to update each January.
+
+[Unit]
+Description=Run SkopaqTrader session weekdays at 09:10 IST
+Requires=skopaq-daemon.service
+
+[Timer]
+OnCalendar=Mon-Fri 09:10:00
+Unit=skopaq-daemon.service
+
+# Tighter than the 1-minute default. Market open is a hard edge and the session
+# does pre-open work before 09:15.
+AccuracySec=1s
+
+# Explicitly NOT persistent. If the box was down at 09:10, we do not want the
+# session to fire the moment it boots — starting a "pre-open" run at 14:00
+# against a mid-session market is worse than skipping the day.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
