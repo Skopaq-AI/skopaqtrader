@@ -1,0 +1,94 @@
+# SkopaqTrader — Oracle Cloud (Always Free ARM A1) service stack
+#
+# Replaces the two Fly apps (skopaq-trader, skopaq-telegram) and the Railway
+# daemon cron with one 2 OCPU / 12 GB box.
+#
+#   docker compose -f deploy/oracle/docker-compose.oci.yml up -d
+#
+# Long-running services only. The daemon is a once-a-day batch job driven by
+# the systemd timer in deploy/oracle/systemd/, not a container that idles for
+# 23 hours — see the `daemon` service below.
+
+name: skopaq
+
+x-common: &common
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+    args:
+      # 3.12 rather than the 3.14 default: on aarch64 several deps in the
+      # langchain/pandas tree still resolve to sdists on 3.14 and compile from
+      # source, which on 2 ARM cores turns a 5-minute build into a 40-minute one.
+      PYTHON_VERSION: "3.12"
+  image: skopaq:oci
+  env_file:
+    - ${SKOPAQ_ENV_FILE:-/opt/skopaq/.env}
+  environment:
+    PYTHONUNBUFFERED: "1"
+    TZ: Asia/Kolkata
+    # Mirrors the Fly volume layout so /data means the same thing on both.
+    # HF_HOME lands model weights on the persistent volume rather than in the
+    # container layer, so a rebuild doesn't re-download them.
+    HF_HOME: /data/hf
+  volumes:
+    - /opt/skopaq/data:/data
+    - /opt/skopaq/logs:/app/logs
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "3"
+
+services:
+  # ── FastAPI backend ─────────────────────────────────────────────────────
+  # Bound to loopback on purpose. The VCN security list only admits 22/tcp, so
+  # publishing on 0.0.0.0 would be a false sense of exposure anyway — but
+  # binding to 127.0.0.1 means a security-list mistake later can't
+  # accidentally expose an unauthenticated trading API to the internet.
+  #
+  # Reach it over an SSH tunnel:
+  #   ssh -L 8000:localhost:8000 ubuntu@<ip>
+  #
+  # To serve it publicly you need a domain and a TLS terminator — see
+  # docs/deployment/oracle-cloud.md. Do not just change this to 0.0.0.0.
+  api:
+    <<: *common
+    command: api
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ── Telegram bot ────────────────────────────────────────────────────────
+  telegram:
+    <<: *common
+    command: telegram
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ── Autonomous daemon (batch) ───────────────────────────────────────────
+  # Profile-gated so `up -d` ignores it. Started once per trading day by
+  # skopaq-daemon.timer via `docker compose run --rm daemon`, which is the
+  # direct equivalent of the Railway cron it replaces.
+  #
+  # restart: "no" — a trading session that failed should stay failed and be
+  # investigated, not silently retried against a moving market.
+  daemon:
+    <<: *common
+    command: daemon
+    restart: "no"
+    profiles: ["batch"]
+
+  # ── Position monitor ────────────────────────────────────────────────────
+  # Only useful when positions are open. Enable with:
+  #   docker compose -f ... --profile monitor up -d monitor
+  monitor:
+    <<: *common
+    command: monitor
+    profiles: ["monitor"]

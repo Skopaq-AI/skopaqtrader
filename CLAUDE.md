@@ -153,6 +153,7 @@ skopaq/
 
 ## Deployment
 
+- **Oracle Cloud** — `deploy/oracle/` — Always Free ARM box (2 OCPU / 12 GB, `ap-hyderabad-1`) running API + Telegram + daemon timer. Consolidates the Fly.io and Railway deployments; see `docs/deployment/oracle-cloud.md`
 - **Railway API** — `railway.toml` — FastAPI server (always running)
 - **Railway Daemon** — `railway-daemon.toml` — Cron job at 09:10 IST weekdays
 - **Vercel** — `frontend/` — Next.js dashboard

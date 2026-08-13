@@ -15,7 +15,11 @@
 #
 # Or use docker-compose.yml for all services at once.
 
-FROM python:3.14-slim AS base
+# Overridable so arm64 hosts can pin an older interpreter. On aarch64 (the OCI
+# Always Free A1 shape) some dependencies still have no 3.14 wheels and would
+# fall back to compiling from source; deploy/oracle pins 3.12 for that reason.
+ARG PYTHON_VERSION=3.14
+FROM python:${PYTHON_VERSION}-slim AS base
 
 WORKDIR /app
 
