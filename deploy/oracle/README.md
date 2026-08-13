@@ -12,7 +12,7 @@ In the **OCI Cloud Shell** (Console → terminal icon — it has an authenticate
 `oci` CLI, nothing to install):
 
 ```bash
-git clone https://github.com/samuelvinay91/skopaqtrader.git
+git clone https://github.com/Skopaq-AI/skopaqtrader.git
 cd skopaqtrader/deploy/oracle
 ./provision.sh
 ```

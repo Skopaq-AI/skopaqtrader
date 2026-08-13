@@ -10,7 +10,7 @@
 # Cloud Shell ships an already-authenticated `oci` CLI, so there are no keys
 # to configure and nothing to install.
 #
-#   git clone https://github.com/samuelvinay91/skopaqtrader.git
+#   git clone https://github.com/Skopaq-AI/skopaqtrader.git
 #   cd skopaqtrader/deploy/oracle
 #   ./provision.sh
 #

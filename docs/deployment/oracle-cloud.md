@@ -48,7 +48,7 @@ You do **not** need the `oci` CLI, Terraform, or an SSH key locally. Cloud Shell
 Open the **Cloud Shell** from the Console (terminal icon, top right). It has an already-authenticated `oci` CLI, so there is nothing to install or configure.
 
 ```bash
-git clone https://github.com/samuelvinay91/skopaqtrader.git
+git clone https://github.com/Skopaq-AI/skopaqtrader.git
 cd skopaqtrader/deploy/oracle
 ./provision.sh
 ```

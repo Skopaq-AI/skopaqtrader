@@ -83,7 +83,7 @@ runcmd:
   #   /opt/skopaq/logs         daemon session logs
   #   /opt/skopaq/skopaqtrader the checkout
   - mkdir -p /opt/skopaq/data /opt/skopaq/logs
-  - git clone https://github.com/samuelvinay91/skopaqtrader.git /opt/skopaq/skopaqtrader
+  - git clone https://github.com/Skopaq-AI/skopaqtrader.git /opt/skopaq/skopaqtrader
   - chown -R ubuntu:ubuntu /opt/skopaq
 
   # Placeholder so `scp .env ...` lands on a file with sane permissions rather
