@@ -1,0 +1,5 @@
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/langchain_core/_api/deprecation.py:25: UserWarning: Core Pydantic V1 functionality isn't compatible with Python 3.14 or greater.
+  from pydantic.v1.fields import FieldInfo as FieldInfoV1
+SkopaqTradingGraph: 264 lines
+GraphSetup.setup_graph(self, selected_analysts=['market', 'social', 'news', 'fundamentals'])
+agents exported: 26

@@ -1,0 +1,22 @@
+Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.
+env bridged: 0 vars
+
+role                      client                              model
+----------------------------------------------------------------------------------------
+_default                  NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+aggressive_debator        NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+bear_researcher           NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+bull_researcher           NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+chat_brain                ChatAnthropic                       claude-opus-4-6
+conservative_debator      NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+fundamentals_analyst      NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+market_analyst            NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+neutral_debator           NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+news_analyst              NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+research_manager          ChatAnthropic                       claude-opus-4-6
+risk_manager              ChatAnthropic                       claude-opus-4-6
+sell_analyst              NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+social_analyst            UnifiedChatOpenAI                   x-ai/grok-3-mini
+trader                    NormalizedChatGoogleGenerativeAI    gemini-3-flash-preview
+
+roles mapped: 15
