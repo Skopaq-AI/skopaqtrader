@@ -265,3 +265,16 @@ Thumbs.db
 .env.local
 .env.*.local
 site/
+
+# Research harness: model weights, vendored sources and venvs are never
+# committed. NSE price data is covered by **/data_cache/ above — NSE's data
+# policy permits analysis, not redistribution.
+.venv-kronos/
+.venv-*/
+research/harness/vendor/
+research/harness/checkpoints/
+# Per-origin CSVs carry raw NSE prices (origin_px/actual_px). A generic
+# `results/` rule above happens to catch these — state it explicitly so a
+# rename cannot silently start publishing exchange data. Headline numbers live
+# in research/harness/README.md instead.
+research/harness/results/
