@@ -204,3 +204,79 @@ nothing.
 
 Also noted: `skopaq status` shows **Mode: LIVE**. Use explicit `--paper` on every
 baseline and verification run.
+
+---
+
+## Phase 1 executed — 2026-08-20
+
+Re-vendored `tradingagents/` at `upstream/main`; tagged `upstream-v0.3.1`.
+Our pre-merge tree and a 2,292-line patch of our changes were preserved first.
+
+    files      56 -> 71
+    diff       69 files changed, +5,496 / -1,548
+
+**This branch is intentionally broken until Phase 2 completes.** All 27 of our
+modifications are gone by design — re-applying them deliberately is the point.
+
+### Measured breakage
+
+| Check | Result |
+|---|---|
+| Unit tests | **3 collection errors** (crypto dataflow modules we added, now absent) |
+| `build_llm_map()` | still 15 roles — **misleading, see below** |
+| `llm_map` threading into agent factories | **0 present, 5 missing** |
+| Our files removed by the re-vendor | 10 |
+
+### The routing check from Phase 0 was insufficient
+
+`build_llm_map()` lives in `skopaq/llm/`, not `tradingagents/`, so it kept
+returning 15 roles even with every agent-side modification stripped out. It
+verifies the map is *built*, not that it is *threaded*. Use this instead — it
+inspects the factory signatures that actually consume it:
+
+```bash
+python3 -c "
+import inspect, importlib
+targets = [('tradingagents.agents.trader.trader','create_trader'),
+           ('tradingagents.agents.managers.research_manager','create_research_manager'),
+           ('tradingagents.agents.researchers.bull_researcher','create_bull_researcher')]
+for mod, fn in targets:
+    f = getattr(importlib.import_module(mod), fn)
+    p = list(inspect.signature(f).parameters)
+    print(('OK  ' if 'llm_map' in p else 'GONE'), fn, p)
+"
+```
+
+### Structural changes decoded
+
+Two upstream edits that the diff stats made look alarming:
+
+- **`agents/managers/risk_manager.py` → `agents/managers/portfolio_manager.py`.**
+  A rename, not a deletion — that is the `theirs 0+/66-` line in the collision
+  table. `create_risk_manager` is now **`create_portfolio_manager`**.
+- **Risk debators renamed to match their filenames**:
+  `create_aggressive_debator` / `create_conservative_debator` /
+  `create_neutral_debator`.
+
+Also noted: upstream's model catalog warns
+`Model 'claude-opus-4-6' is not in the known model list for provider 'anthropic'`.
+Non-fatal ("Continuing anyway"), but our judge roles depend on it — check
+whether the catalog needs an entry in Phase 2.
+
+### Phase 2a worklist — our files to restore
+
+```
+tradingagents/dataflows/indstocks.py
+tradingagents/dataflows/crypto_onchain.py
+tradingagents/dataflows/crypto_funding.py
+tradingagents/dataflows/crypto_defi.py
+tradingagents/agents/analysts/onchain_analyst.py
+tradingagents/agents/analysts/funding_analyst.py
+tradingagents/agents/analysts/defi_analyst.py
+tradingagents/agents/utils/crypto_tools.py
+tradingagents/llm_clients/TODO.md
+```
+
+`agents/managers/risk_manager.py` also shows as deleted, but that one is
+upstream's rename — do **not** restore it; retarget our callers onto
+`create_portfolio_manager` instead.

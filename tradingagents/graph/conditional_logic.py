@@ -17,15 +17,21 @@ class ConditionalLogic:
         last_message = messages[-1]
         if last_message.tool_calls:
             return "tools_market"
-        return "Done Market"
+        return "Msg Clear Market"
 
     def should_continue_social(self, state: AgentState):
-        """Determine if social media analysis should continue."""
+        """Determine if sentiment-analyst tool round should continue.
+
+        Method name keeps the legacy ``social`` suffix to match the
+        ``AnalystType.SOCIAL = "social"`` wire value (saved-config
+        back-compat); the returned ``clear_node`` label uses the v0.2.5
+        rename so it matches the node registered by the execution plan.
+        """
         messages = state["messages"]
         last_message = messages[-1]
         if last_message.tool_calls:
             return "tools_social"
-        return "Done Social"
+        return "Msg Clear Sentiment"
 
     def should_continue_news(self, state: AgentState):
         """Determine if news analysis should continue."""
@@ -33,7 +39,7 @@ class ConditionalLogic:
         last_message = messages[-1]
         if last_message.tool_calls:
             return "tools_news"
-        return "Done News"
+        return "Msg Clear News"
 
     def should_continue_fundamentals(self, state: AgentState):
         """Determine if fundamentals analysis should continue."""
@@ -41,31 +47,7 @@ class ConditionalLogic:
         last_message = messages[-1]
         if last_message.tool_calls:
             return "tools_fundamentals"
-        return "Done Fundamentals"
-
-    def should_continue_onchain(self, state: AgentState):
-        """Determine if on-chain analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_onchain"
-        return "Done Onchain"
-
-    def should_continue_defi(self, state: AgentState):
-        """Determine if DeFi/tokenomics analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_defi"
-        return "Done Defi"
-
-    def should_continue_funding(self, state: AgentState):
-        """Determine if funding rate analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_funding"
-        return "Done Funding"
+        return "Msg Clear Fundamentals"
 
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""
@@ -83,7 +65,7 @@ class ConditionalLogic:
         if (
             state["risk_debate_state"]["count"] >= 3 * self.max_risk_discuss_rounds
         ):  # 3 rounds of back-and-forth between 3 agents
-            return "Risk Judge"
+            return "Portfolio Manager"
         if state["risk_debate_state"]["latest_speaker"].startswith("Aggressive"):
             return "Conservative Analyst"
         if state["risk_debate_state"]["latest_speaker"].startswith("Conservative"):
