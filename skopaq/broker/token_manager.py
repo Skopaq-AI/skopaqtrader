@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -36,7 +36,10 @@ class TokenHealth:
     """Current token status."""
 
     valid: bool
-    token: str = ""
+    # repr=False: this dataclass is reprd into log lines, exception messages
+    # and pytest assertion output. Without it the raw bearer token is printed
+    # verbatim — observed leaking a live JWT into a test failure message.
+    token: str = field(default="", repr=False)
     expires_at: Optional[datetime] = None
     remaining: Optional[timedelta] = None
     warning: str = ""
@@ -86,6 +89,32 @@ class TokenManager:
         self._warned_thresholds.clear()
         logger.info("Token stored, expires at %s", expires_at.isoformat())
 
+    @staticmethod
+    def _env_token() -> str:
+        """Token from ``SKOPAQ_INDSTOCKS_TOKEN`` (env first, then ``.env``)."""
+        import os
+
+        env_token = os.environ.get("SKOPAQ_INDSTOCKS_TOKEN", "")
+        if env_token:
+            return env_token
+        try:
+            from skopaq.config import SkopaqConfig
+
+            return SkopaqConfig().indstocks_token.get_secret_value()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _env_health(token: str, warning: str = "") -> TokenHealth:
+        """Wrap an env-var token. It carries no expiry, so assume 24h."""
+        return TokenHealth(
+            valid=True,
+            token=token,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+            remaining=timedelta(hours=24),
+            warning=warning,
+        )
+
     def get_health(self) -> TokenHealth:
         """Check current token validity and remaining time.
 
@@ -94,31 +123,22 @@ class TokenManager:
         2. ``SKOPAQ_INDSTOCKS_TOKEN`` env var — for Docker/cloud deployments
 
         The env var fallback has no expiry tracking (assumed fresh).
+
+        A file that is present but *unusable* — expired, or undecryptable
+        because the keyfile was lost — falls through to the env var rather than
+        reporting failure.  Previously it did not, so a months-stale file
+        silently shadowed a perfectly good ``SKOPAQ_INDSTOCKS_TOKEN`` and the
+        error told the user to regenerate a token they already had.  Containers
+        were unaffected (no file), which made it look like a local-only fault.
+
+        The fallback is never silent in the other direction either: the
+        returned warning always says the file was ignored and how to clear it.
         """
-        # Fallback: check env var for cloud deployments (Docker, Fly.io)
+        env_token = self._env_token()
+
         if not TOKEN_FILE.exists():
-            import os
-
-            env_token = os.environ.get("SKOPAQ_INDSTOCKS_TOKEN", "")
-            if not env_token:
-                # Also try via SkopaqConfig (reads .env file)
-                try:
-                    from skopaq.config import SkopaqConfig
-
-                    config = SkopaqConfig()
-                    env_token = config.indstocks_token.get_secret_value()
-                except Exception:
-                    pass
-
             if env_token:
-                return TokenHealth(
-                    valid=True,
-                    token=env_token,
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                    remaining=timedelta(hours=24),
-                    warning="",
-                )
-
+                return self._env_health(env_token)
             return TokenHealth(valid=False, warning="No token stored. Run: skopaq token set <token>")
 
         try:
@@ -126,6 +146,13 @@ class TokenManager:
             encrypted = TOKEN_FILE.read_bytes()
             payload = json.loads(fernet.decrypt(encrypted).decode())
         except Exception as exc:
+            if env_token:
+                logger.warning("Token file unreadable (%s) — using env var", exc)
+                return self._env_health(
+                    env_token,
+                    f"Token file unreadable ({exc}); using SKOPAQ_INDSTOCKS_TOKEN. "
+                    "Run: skopaq token clear",
+                )
             return TokenHealth(valid=False, warning=f"Token decryption failed: {exc}")
 
         token = payload["token"]
@@ -134,6 +161,16 @@ class TokenManager:
         remaining = expires_at - now
 
         if remaining.total_seconds() <= 0:
+            if env_token:
+                logger.warning(
+                    "Stored token expired %s — using SKOPAQ_INDSTOCKS_TOKEN instead",
+                    expires_at.isoformat(),
+                )
+                return self._env_health(
+                    env_token,
+                    f"Stored token expired {expires_at.date()}; using "
+                    "SKOPAQ_INDSTOCKS_TOKEN. Run: skopaq token clear",
+                )
             return TokenHealth(
                 valid=False,
                 expires_at=expires_at,
