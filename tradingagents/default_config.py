@@ -78,6 +78,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Pending entries are never pruned. None disables rotation entirely.
     "memory_log_max_entries": None,
     # LLM settings
+    # SKOPAQ ADDITION: yfinance symbol suffix for non-US markets.
+    # Indian NSE stocks need ".NS" (e.g., RELIANCE -> RELIANCE.NS).
+    # Leave empty for US markets. Consumed by _apply_yfinance_suffix()
+    # in dataflows/interface.py — without this key that helper is a
+    # silent no-op and every yfinance fallback fetches a US ticker.
+    "yfinance_symbol_suffix": "",
+
     "llm_provider": "openai",
     "deep_think_llm": "gpt-5.5",
     "quick_think_llm": "gpt-5.4-mini",

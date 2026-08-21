@@ -77,7 +77,11 @@ TOOLS_CATEGORIES = {
     }
 }
 
+# SKOPAQ ADDITION: INDstocks is the primary vendor for Indian equities.
+from .indstocks import get_stock_data_indstocks
+
 VENDOR_LIST = [
+    "indstocks",   # SKOPAQ: primary for NSE/BSE
     "yfinance",
     "fred",
     "polymarket",
@@ -95,6 +99,7 @@ OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "indstocks": get_stock_data_indstocks,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
@@ -198,8 +203,12 @@ def route_to_vendor(method: str, *args, **kwargs):
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
+        # SKOPAQ ADDITION: yfinance needs .NS/.BO on Indian symbols;
+        # every other vendor takes the bare symbol.
+        call_args = _apply_yfinance_suffix(args, method) if vendor == "yfinance" else args
+
         try:
-            return impl_func(*args, **kwargs)
+            return impl_func(*call_args, **kwargs)
         except VendorRateLimitError:
             logger.warning("Vendor %r rate-limited for %s; trying next vendor.", vendor, method)
             continue
@@ -260,3 +269,30 @@ def route_to_vendor(method: str, *args, **kwargs):
         raise first_error
 
     raise RuntimeError(f"No available vendor for '{method}'")
+
+
+_SYMBOL_ARG_METHODS = frozenset({
+    "get_stock_data", "get_indicators", "get_fundamentals",
+    "get_balance_sheet", "get_cashflow", "get_income_statement",
+    "get_news", "get_insider_transactions",
+})
+
+
+def _apply_yfinance_suffix(args: tuple, method: str) -> tuple:
+    """Append the configured yfinance symbol suffix to the symbol argument.
+
+    Indian NSE stocks require a ``.NS`` suffix for yfinance to recognise them
+    (e.g., ``RELIANCE`` → ``RELIANCE.NS``).  The suffix is read from the
+    ``yfinance_symbol_suffix`` config key (empty string = no change).
+    """
+    config = get_config()
+    suffix = config.get("yfinance_symbol_suffix", "")
+
+    if not suffix or not args or method not in _SYMBOL_ARG_METHODS:
+        return args
+
+    symbol = args[0]
+    if isinstance(symbol, str) and not symbol.upper().endswith(suffix.upper()):
+        return (symbol + suffix,) + args[1:]
+
+    return args
