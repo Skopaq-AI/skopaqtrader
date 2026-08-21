@@ -71,3 +71,27 @@ class ConditionalLogic:
         if state["risk_debate_state"]["latest_speaker"].startswith("Conservative"):
             return "Neutral Analyst"
         return "Aggressive Analyst"
+
+    def should_continue_onchain(self, state: AgentState):
+        """SKOPAQ ADDITION: continue on-chain analysis while tools are pending."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_onchain"
+        return "Done Onchain"
+
+    def should_continue_defi(self, state: AgentState):
+        """SKOPAQ ADDITION: continue DeFi/tokenomics analysis while tools are pending."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_defi"
+        return "Done Defi"
+
+    def should_continue_funding(self, state: AgentState):
+        """SKOPAQ ADDITION: continue funding rate analysis while tools are pending."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_funding"
+        return "Done Funding"

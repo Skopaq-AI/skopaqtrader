@@ -64,6 +64,10 @@ class Propagator:
             ),
             "market_report": "",
             "fundamentals_report": "",
+            # SKOPAQ ADDITION: crypto analyst reports, empty on the equity path
+            "onchain_report": "",
+            "defi_report": "",
+            "funding_report": "",
             "sentiment_report": "",
             "news_report": "",
         }

@@ -9,6 +9,8 @@ description = "AI algorithmic trading platform for Indian equities — built on 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "python-dotenv>=1.0",  # upstream v0.3.1: declared explicitly
+    "langgraph-checkpoint-sqlite>=2.0",  # upstream v0.3.1: graph/checkpointer.py
     # --- Upstream TradingAgents deps ---
     "langchain-core>=0.3.81",
     "backtrader>=1.9.78.123",

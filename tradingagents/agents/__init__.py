@@ -1,4 +1,8 @@
 from .analysts.fundamentals_analyst import create_fundamentals_analyst
+# SKOPAQ ADDITION: crypto-specific analysts
+from .analysts.onchain_analyst import create_onchain_analyst
+from .analysts.defi_analyst import create_defi_analyst
+from .analysts.funding_analyst import create_funding_analyst
 from .analysts.market_analyst import create_market_analyst
 from .analysts.news_analyst import create_news_analyst
 from .analysts.sentiment_analyst import (
@@ -17,6 +21,9 @@ from .utils.agent_states import AgentState, InvestDebateState, RiskDebateState
 from .utils.agent_utils import create_msg_delete
 
 __all__ = [
+    "create_onchain_analyst",
+    "create_defi_analyst",
+    "create_funding_analyst",
     "AgentState",
     "create_msg_delete",
     "InvestDebateState",
