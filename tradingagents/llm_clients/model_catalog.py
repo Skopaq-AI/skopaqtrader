@@ -102,12 +102,18 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Claude Opus 4.8 - Frontier agentic coding and reasoning", "claude-opus-4-8"),
             ("Claude Sonnet 5 - Near-frontier intelligence at Sonnet cost", "claude-sonnet-5"),
             ("Claude Opus 4.7 - Previous frontier, long-running agents", "claude-opus-4-7"),
+            # SKOPAQ ADDITION: the judge-role model our llm_map pins
+            # (research_manager / risk_manager). Without a catalog entry
+            # base_client emits "not in the known model list" on every run.
+            ("Claude Opus 4.6 - Judge roles (SkopaqTrader default)", "claude-opus-4-6"),
         ],
     },
     "google": {
         "quick": [
             ("Gemini 3.5 Flash - Latest, frontier agentic + coding (GA)", "gemini-3.5-flash"),
             ("Gemini 3.1 Flash Lite - Most cost-efficient", "gemini-3.1-flash-lite"),
+            # SKOPAQ ADDITION: the model our llm_map pins for 10 of 15 roles.
+            ("Gemini 3 Flash Preview - SkopaqTrader default analyst", "gemini-3-flash-preview"),
         ],
         "deep": [
             ("Gemini 3.1 Pro - Reasoning-first, complex workflows (preview)", "gemini-3.1-pro-preview"),
