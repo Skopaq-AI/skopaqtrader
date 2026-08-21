@@ -169,6 +169,30 @@ def build_instrument_context(
     return context
 
 
+def get_crypto_reports_block(state: Mapping[str, Any]) -> str:
+    """Render the crypto-specific analyst reports, or "" for equities.
+
+    SKOPAQ ADDITION. Kept as one helper rather than inlined per agent: the
+    previous revision duplicated this block across 13 files, and every one of
+    them became a merge conflict when upstream restructured prompt assembly.
+    One helper plus a ``{crypto_reports}`` placeholder keeps the future merge
+    surface at a single function.
+
+    Returns an empty string when no crypto analyst ran, so the placeholder
+    collapses to nothing on the equity path.
+    """
+    onchain = state.get("onchain_report", "")
+    defi = state.get("defi_report", "")
+    funding = state.get("funding_report", "")
+    if not (onchain or defi or funding):
+        return ""
+    return (
+        f"\nOn-Chain Network Analysis: {onchain}"
+        f"\nDeFi/Tokenomics Analysis: {defi}"
+        f"\nFunding Rate/Derivatives Analysis: {funding}"
+    )
+
+
 def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
     """Return the instrument context for the current run.
 
