@@ -4,13 +4,13 @@ This file provides context for AI coding agents working on the SkopaqTrader code
 
 ## Project Overview
 
-AI algorithmic trading platform for Indian equities. Built on vendored [TradingAgents v0.2.0](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) with a custom `skopaq/` layer for INDstocks broker integration, multi-model LLM tiering, and an autonomous execution pipeline.
+AI algorithmic trading platform for Indian equities. Built on vendored [TradingAgents v0.3.1](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) with a custom `skopaq/` layer for INDstocks broker integration, multi-model LLM tiering, and an autonomous execution pipeline.
 
 ## Architecture
 
 Two codebases in one repo:
 
-- **`tradingagents/`** — Vendored upstream. Multi-agent LangGraph pipeline: 4 analysts → bull/bear researchers → risk debate → trader decision. Modifications are surgical and tracked in `UPSTREAM_CHANGES.md`.
+- **`tradingagents/`** — Vendored upstream (v0.3.1). Multi-agent LangGraph pipeline: 4 analysts → bull/bear researchers → risk debate → trader decision. Modifications are surgical and tracked in `UPSTREAM_CHANGES.md`.
 - **`skopaq/`** — Custom extensions: broker client, execution pipeline, CLI, config, LLM tiering, scanner, risk management, memory, daemon.
 
 ### Key Flow

@@ -285,3 +285,72 @@ tradingagents/llm_clients/TODO.md
 `agents/managers/risk_manager.py` also shows as deleted, but that one is
 upstream's rename — do **not** restore it; retarget our callers onto
 `create_portfolio_manager` instead.
+
+---
+
+## Phases 2 and 4 executed — 2026-08-21
+
+All of Phase 2 landed; Phase 4 docs updated. **546 unit tests passing**
+(540 baseline + 6 new suffix guards), 0 model warnings.
+
+| Step | Outcome | Commit |
+|---|---|---|
+| 2a | 8 of our files restored; all import against v0.3.1 | `8e45bc3` |
+| 2b | `_normalize_symbol` KEPT — not superseded (tested) | `8e45bc3` |
+| 2c | AgentState reducers merged; 18 fields, 18 reducers | `4b293b4` |
+| 2d | Crypto reports → one shared helper, 5 call sites | `4b293b4` |
+| 2e | Crypto graph wiring + 2 new upstream deps | `11e8495` |
+| 2g | INDstocks vendor registration + suffix guards | `8d9742e` |
+| 2f | `llm_map` routing + parallel analyst fan-out | `4eb8784`, `b246db3` |
+| 2h | Audit sweep; models registered, 1 patch dropped | `3651365` |
+| 4 | `UPSTREAM_CHANGES.md`, `CLAUDE.md` | this commit |
+
+### Corrections this merge forced on the plan
+
+The plan was wrong in three places, each caught by measurement rather than
+review. Recorded because the pattern matters more than the specifics: **every
+one was an assumption that a green test suite would have carried through.**
+
+1. **"15 collision files are mechanical `llm_map` changes."** False. `llm_map`
+   appears in exactly two files. The other 13 were crypto report injection, and
+   the Phase-1 check for `llm_map` in `create_trader`'s signature was therefore
+   testing something that never existed.
+2. **"`build_llm_map()` returning 15 roles proves routing works."** False. It
+   lives in `skopaq/llm/` and kept returning 15 with every agent-side change
+   stripped out. It proves the map is *built*, not *consumed*.
+3. **"`symbol_utils.py` may let us delete `_normalize_symbol`."** False — it
+   normalises the opposite direction.
+
+### Three silent failures the test suite did not catch
+
+- **`yfinance_symbol_suffix` dropped from `default_config.py`.** The suffix
+  helper degraded to a no-op; every yfinance fallback would have fetched
+  `RELIANCE` (a US ticker) instead of `RELIANCE.NS`. All 540 tests passed.
+  Now guarded by `TestYfinanceSuffix`.
+- **Parallel analyst fan-out missing.** Suite passed at 546 both with and
+  without it — a 4x slowdown with byte-identical output. No test covers graph
+  topology; verified by compiling the graph and inspecting edges instead.
+- **Unregistered model ids.** Every run logged "not in the known model list",
+  which is exactly what a genuinely wrong model id would look like.
+
+## Remaining before merging to main
+
+**Phase 3 is NOT complete.** Two runtime baselines were never captured, because
+the INDstocks token was expired during Phase 0:
+
+```bash
+git checkout pre-upstream-v0.3.1
+skopaq analyze RELIANCE --paper       # save
+skopaq daemon --once --paper          # save the full report tree
+git checkout upstream/v0.3.1-merge
+# re-run both, diff against the baselines
+```
+
+`skopaq status` reports **Mode: LIVE** — pass `--paper` explicitly every time.
+
+These cost real LLM credits, which is why they were left for a human decision
+rather than run unattended. Until they pass, what is verified is: unit tests,
+per-role routing, graph topology, and vendor registration — everything except
+an actual end-to-end trading session.
+
+**Do not merge to `main` until the paper daemon run is clean.**

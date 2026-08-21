@@ -1,9 +1,62 @@
 # Upstream Changes Log
 
-Documents all modifications made to files under `tradingagents/` (vendored from TauricResearch/TradingAgents v0.2.0).
+Documents all modifications made to files under `tradingagents/` (vendored from TauricResearch/TradingAgents **v0.3.1**).
 
-**Upstream tag:** `upstream-v0.2.0`
-**Diff command:** `git diff upstream-v0.2.0..HEAD -- tradingagents/`
+**Upstream tag:** `upstream-v0.3.1`
+**Diff command:** `git diff upstream-v0.3.1..HEAD -- tradingagents/`
+
+> The `upstream-vX` tags point at commits in TauricResearch/TradingAgents and
+> are **not** pushed to our origin — pushing one would drag upstream's entire
+> history in. Recreate locally with:
+> `git fetch upstream --tags && git tag -f upstream-v0.3.1 upstream/main`
+
+## Merge history
+
+| From | To | Branch | Notes |
+|---|---|---|---|
+| — | v0.2.0 | — | initial vendoring |
+| v0.2.0 | **v0.3.1** | `upstream/v0.3.1-merge` | 167 commits; see `docs/maintenance/upstream-merge-v0.3.1.md` |
+
+### What the v0.3.1 merge changed about this list
+
+**Dropped — upstream implemented it independently:**
+
+- `agents/utils/technical_indicators_tools.py` — comma-separated indicator
+  handling. Upstream's version splits, lowercases and catches `ValueError` per
+  indicator. Ours was removed rather than reapplied.
+
+**Dropped — no longer applicable:**
+
+- `graph/reflection.py` — crypto report injection. Upstream reduced `Reflector`
+  to `reflect_on_final_decision`; it no longer assembles analyst reports.
+- `agents/managers/risk_manager.py` — upstream renamed this to
+  `portfolio_manager.py`. `create_risk_manager` is now
+  `create_portfolio_manager`. Our `llm_map` key stays `"risk_manager"`, since
+  that key is what routes the judge role to Claude Opus.
+
+**Restructured — same capability, smaller surface:**
+
+- Crypto report injection was duplicated across 13 agent files. Every one
+  became a conflict when upstream rewrote prompt assembly. It is now a single
+  helper, `agent_utils.get_crypto_reports_block()`, plus a `{crypto_reports}`
+  placeholder in the 5 prompts that still read report fields (both researchers,
+  all three debators). Future merge surface: one function.
+
+**Added by this merge:**
+
+- `llm_clients/model_catalog.py` — registered `claude-opus-4-6` and
+  `gemini-3-flash-preview`. Upstream's rebuilt catalog knows neither, so every
+  run logged "not in the known model list", which would mask a genuinely wrong
+  model id.
+- `pyproject.toml` — `langgraph-checkpoint-sqlite` and `python-dotenv`, both
+  newly required by upstream.
+
+**Kept, contrary to expectation:**
+
+- `dataflows/indstocks.py::_normalize_symbol()` — upstream's new
+  `dataflows/symbol_utils.normalize_symbol()` looked like a replacement but
+  normalises the *opposite* direction (it preserves `.NS` for Yahoo; we strip
+  it for INDstocks). Tested, not assumed.
 
 ## Changes
 
