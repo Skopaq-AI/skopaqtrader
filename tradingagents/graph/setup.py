@@ -51,12 +51,34 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        llm_map: dict[str, Any] | None = None,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        Args:
+            llm_map: SKOPAQ ADDITION. Optional per-role LLM overrides, keyed by
+                role name (``market_analyst``, ``research_manager``, ...).
+                Upstream offers only the two ``quick``/``deep`` tiers; we route
+                each role to a different provider. When None or a role is
+                absent, upstream's tier is used unchanged, so the default path
+                is byte-for-byte upstream behaviour.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        self.llm_map = llm_map or {}
+
+    def _llm(self, role: str, default: Any) -> Any:
+        """Resolve the LLM for ``role``, falling back to upstream's tier.
+
+        Order: explicit role -> map's ``_default`` -> the upstream tier passed
+        in. Never returns None; a missing role must degrade to working
+        behaviour rather than a crash mid-graph-build.
+        """
+        if not self.llm_map:
+            return default
+        return self.llm_map.get(role) or self.llm_map.get("_default") or default
 
     def setup_graph(
         self, selected_analysts=("market", "social", "news", "fundamentals")
@@ -73,23 +95,23 @@ class GraphSetup:
         plan = build_analyst_execution_plan(selected_analysts)
 
         analyst_factories = {
-            "market": lambda: create_market_analyst(self.quick_thinking_llm),
-            "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
-            "news": lambda: create_news_analyst(self.quick_thinking_llm),
-            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
+            "market": lambda: create_market_analyst(self._llm("market_analyst", self.quick_thinking_llm)),
+            "social": lambda: create_sentiment_analyst(self._llm("social_analyst", self.quick_thinking_llm)),
+            "news": lambda: create_news_analyst(self._llm("news_analyst", self.quick_thinking_llm)),
+            "fundamentals": lambda: create_fundamentals_analyst(self._llm("fundamentals_analyst", self.quick_thinking_llm)),
         }
 
         # Create researcher and manager nodes
-        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
-        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
+        bull_researcher_node = create_bull_researcher(self._llm("bull_researcher", self.quick_thinking_llm))
+        bear_researcher_node = create_bear_researcher(self._llm("bear_researcher", self.quick_thinking_llm))
+        research_manager_node = create_research_manager(self._llm("research_manager", self.deep_thinking_llm))
+        trader_node = create_trader(self._llm("trader", self.quick_thinking_llm))
 
         # Create risk analysis nodes
-        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        aggressive_analyst = create_aggressive_debator(self._llm("aggressive_debator", self.quick_thinking_llm))
+        neutral_analyst = create_neutral_debator(self._llm("neutral_debator", self.quick_thinking_llm))
+        conservative_analyst = create_conservative_debator(self._llm("conservative_debator", self.quick_thinking_llm))
+        portfolio_manager_node = create_portfolio_manager(self._llm("risk_manager", self.deep_thinking_llm))
 
         # Create workflow
         workflow = StateGraph(AgentState)

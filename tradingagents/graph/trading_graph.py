@@ -10,6 +10,13 @@ from typing import Any
 import yfinance as yf
 from langgraph.prebuilt import ToolNode
 
+# SKOPAQ ADDITION: crypto analyst tools
+from tradingagents.agents.utils.crypto_tools import (
+    get_blockchain_stats, get_address_activity, get_token_fundamentals,
+    get_defi_tvl, get_chain_tvl_overview, get_funding_rates,
+    get_open_interest, get_long_short_ratio,
+)
+
 # Import the abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
@@ -124,11 +131,15 @@ class TradingAgentsGraph:
             max_debate_rounds=self.config["max_debate_rounds"],
             max_risk_discuss_rounds=self.config["max_risk_discuss_rounds"],
         )
+        # SKOPAQ ADDITION: per-role LLM overrides. Absent -> upstream tiers.
+        llm_map = self.config.get("llm_map")
+
         self.graph_setup = GraphSetup(
             self.quick_thinking_llm,
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            llm_map=llm_map,
         )
 
         self.propagator = Propagator(
