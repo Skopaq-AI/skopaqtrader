@@ -133,11 +133,21 @@ class GraphSetup:
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
         # Define edges
-        # Start with the first analyst
-        workflow.add_edge(START, plan.specs[0].agent_node)
+        # SKOPAQ MODIFICATION: analysts fan out in parallel rather than running
+        # in the sequence upstream wires. The analysts are independent — each
+        # reads the ticker and writes its own report field — so chaining them
+        # serialises four LLM round-trips that have no data dependency, and a
+        # full analysis takes roughly as long as the four combined instead of
+        # the slowest one.
+        #
+        # This requires the reducers in agents/utils/agent_states.py: fanning
+        # in four branches onto one state makes LangGraph's default LastValue
+        # channel raise. Do not restore the sequential wiring without also
+        # reverting those, and vice versa — they are a matched pair.
+        for spec in plan.specs:
+            workflow.add_edge(START, spec.agent_node)
 
-        # Connect analysts in sequence
-        for i, spec in enumerate(plan.specs):
+        for spec in plan.specs:
             current_analyst = spec.agent_node
             current_tools = spec.tool_node
             current_clear = spec.clear_node
@@ -150,11 +160,10 @@ class GraphSetup:
             )
             workflow.add_edge(current_tools, current_analyst)
 
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(plan.specs) - 1:
-                workflow.add_edge(current_clear, plan.specs[i + 1].agent_node)
-            else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+            # Every analyst converges on the researcher stage. LangGraph waits
+            # for all inbound branches before running Bull Researcher, so the
+            # fan-in is the synchronisation point.
+            workflow.add_edge(current_clear, "Bull Researcher")
 
         # Both research-debate edges share the complete DEBATE_PATH_MAP (#1088).
         for debate_node in ("Bull Researcher", "Bear Researcher"):
