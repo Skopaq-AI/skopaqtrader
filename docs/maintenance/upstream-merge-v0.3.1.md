@@ -33,11 +33,16 @@ Upstream v0.3.1 still exposes only `deep_think_llm` / `quick_think_llm`. It adde
 a genuine local capability, and must be re-applied — but it now has to sit on top
 of the new provider registry rather than the old direct client construction.
 
-**2. Upstream added `dataflows/symbol_utils.py` — we may be able to delete code.**
-Our documented change #8 (`_normalize_symbol()` stripping `.NS`/`.BO` in
-`indstocks.py`) may be fully covered by upstream's normalizer plus
-`fix(data): normalize ticker on the news path`. **Evaluate before re-applying;
-deleting a local patch is better than porting it.**
+**2. ~~Upstream's `symbol_utils.py` may let us delete code~~ — WRONG, tested
+in Phase 2b.** Upstream's `normalize_symbol()` maps *to* canonical Yahoo
+symbols; ours strips suffixes *for* INDstocks. Opposite directions:
+
+    input          upstream            ours
+    RELIANCE.NS    RELIANCE.NS         RELIANCE
+    TCS.BO         TCS.BO              TCS
+
+Our `_normalize_symbol()` is **not** superseded and must be kept. Recorded as a
+correction rather than deleted, so nobody re-derives the same wrong hypothesis.
 
 ## Collision inventory
 
