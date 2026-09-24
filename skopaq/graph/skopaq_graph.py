@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from skopaq.broker.models import Exchange, ExecutionResult, TradingSignal
@@ -319,16 +319,23 @@ class SkopaqTradingGraph:
         logger.info("Settled pending decisions for %s", symbol)
         self._save_memory()
 
-    def settle_due(self) -> int:
+    def settle_due(self, should_stop: Optional[Callable[[], bool]] = None) -> int:
         """Settle every ticker's pending decisions whose holding window has traded.
 
         Upstream settles a ticker only when that ticker is analyzed again, so
         decisions on tickers the scanner never picks again would stay pending
         forever. Returns how many decisions were settled.
+
+        Args:
+            should_stop: Checked before each ticker; when it returns true the
+                remaining tickers are left for the next run.
         """
         graph = self._ensure_graph()
         before = {(e["date"], e["ticker"]) for e in graph.memory_log.get_pending_entries()}
         for ticker in sorted({ticker for _, ticker in before}):
+            if should_stop is not None and should_stop():
+                logger.info("Stop requested — leaving the remaining tickers unsettled")
+                break
             try:
                 graph.settle_pending(ticker)
             except Exception:
