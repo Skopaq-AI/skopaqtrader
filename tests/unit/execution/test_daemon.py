@@ -438,6 +438,21 @@ async def test_dry_run_skips_trading(daemon):
     assert report.sells_executed == 0
 
 
+@pytest.mark.asyncio
+async def test_dry_run_does_not_settle_decisions(daemon):
+    """Settling makes LLM reflection calls and Supabase writes: not in a dry run."""
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock, return_value=[]), \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock,
+                      return_value=5) as settle:
+        dry = await daemon.run_session(dry_run=True)
+        settle.assert_not_awaited()
+        real = await daemon.run_session()
+
+    assert dry.decisions_settled == 0
+    assert real.decisions_settled == 5
+
+
 # ── Min Profit Gate (integration check) ──────────────────────────────────────
 
 

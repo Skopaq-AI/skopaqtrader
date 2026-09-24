@@ -56,6 +56,21 @@ def test_one_failing_ticker_does_not_stop_the_rest(tmp_path):
     assert graph.settle_due() == 1
 
 
+def test_stop_leaves_remaining_tickers_for_next_run(tmp_path):
+    store = MagicMock()
+    graph, upstream = _graph(tmp_path, store)
+    asked = []
+
+    def should_stop():
+        asked.append(1)
+        return len(asked) > 2  # stop before the third ticker (TCS.NS)
+
+    assert graph.settle_due(should_stop) == 1  # INFY.NS; HDFC.NS was not due
+    assert sorted(c.args[0] for c in upstream.settle_pending.call_args_list) == [
+        "HDFC.NS", "INFY.NS"]
+    store.save.assert_called_once_with(upstream)
+
+
 def test_nothing_settled_skips_the_save(tmp_path):
     store = MagicMock()
     graph, upstream = _graph(tmp_path, store)
@@ -73,6 +88,7 @@ async def test_daemon_settles_at_the_end_of_a_session():
     daemon._stop = MagicMock(is_set=MagicMock(return_value=False))
     daemon._graph = MagicMock(settle_due=MagicMock(return_value=3))
     assert await daemon._settle_due_decisions() == 3
+    daemon._graph.settle_due.assert_called_once_with(daemon._stop.is_set)
 
     daemon._graph.settle_due.side_effect = RuntimeError("boom")
     assert await daemon._settle_due_decisions() == 0

@@ -233,7 +233,9 @@ class TradingDaemon:
             # Phase 7: REPORTING — compile metrics
             self._phase = DaemonPhase.REPORTING
             report.phase_times = dict(self._phase_times)
-            report.decisions_settled = await self._settle_due_decisions()
+            # A dry run is scan-only: no LLM reflection calls or Supabase writes.
+            if not dry_run:
+                report.decisions_settled = await self._settle_due_decisions()
 
             # Clean up client session
             if self._client is not None:
@@ -520,7 +522,7 @@ class TradingDaemon:
         if self._graph is None or self._stop.is_set():
             return 0
         try:
-            return await asyncio.to_thread(self._graph.settle_due)
+            return await asyncio.to_thread(self._graph.settle_due, self._stop.is_set)
         except Exception:
             logger.warning("Settling past decisions failed", exc_info=True)
             return 0
