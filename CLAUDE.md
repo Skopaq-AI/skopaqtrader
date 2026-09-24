@@ -57,7 +57,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 37 
 ## Common Commands
 
 ```bash
-# Run unit tests (661 tests, no API keys needed)
+# Run unit tests (674 tests, no API keys needed)
 python3 -m pytest tests/unit/ -x -q
 
 # Run a specific test file

@@ -551,12 +551,17 @@ def settle() -> None:
     from skopaq.graph.skopaq_graph import SkopaqTradingGraph
 
     config = SkopaqConfig()
-    graph = SkopaqTradingGraph(
-        _build_upstream_config(config),
-        executor=None,
-        memory_store=_create_memory_store(config),
-    )
-    settled = graph.settle_due()
+    try:
+        graph = SkopaqTradingGraph(
+            _build_upstream_config(config),
+            executor=None,
+            memory_store=_create_memory_store(config),
+        )
+        settled = graph.settle_due()
+    except Exception as exc:
+        # Settling writes an LLM reflection per decision, so it needs the LLM keys.
+        display_error(f"Settling failed: {exc}")
+        raise typer.Exit(1)
     display_success(f"Settled {settled} past decision(s).")
 
 
