@@ -93,7 +93,7 @@ class MemoryStore:
 
     Args:
         client: Authenticated Supabase client (service-role key).
-        max_entries: FIFO cap — only the most recent entries are uploaded.
+        max_entries: FIFO cap on settled entries; pending ones are always kept.
     """
 
     def __init__(self, client: Client, max_entries: int = 50) -> None:
@@ -137,7 +137,12 @@ class MemoryStore:
         return len(entries)
 
     def save(self, graph: Any) -> int:
-        """Upload the graph's decision log to Supabase.
+        """Merge the graph's decision log into the Supabase copy.
+
+        The stored row is read first and merged with the local log, so a
+        failed load or another process's newer entries are never
+        overwritten by this process's partial view. If the row cannot be
+        read, nothing is written.
 
         Args:
             graph: An upstream ``TradingAgentsGraph`` instance.
@@ -148,12 +153,19 @@ class MemoryStore:
         path = _log_path(graph)
         if path is None or not path.exists():
             return 0
-
-        entries = merge_entries(_split_entries(path.read_text(encoding="utf-8")))
-        if not entries:
+        local = _split_entries(path.read_text(encoding="utf-8"))
+        if not local:
             return 0
-        if len(entries) > self._max_entries:
-            entries = entries[-self._max_entries:]
+
+        try:
+            record = self._repo.get_by_role(DECISION_LOG_ROLE)
+        except Exception:
+            logger.warning(
+                "Could not read the stored decision log — not saving over it", exc_info=True
+            )
+            return 0
+        remote = record.documents if record is not None else []
+        entries = self._cap(merge_entries(remote, local))
 
         try:
             self._repo.upsert(AgentMemoryRecord(role=DECISION_LOG_ROLE, documents=entries))
@@ -162,6 +174,16 @@ class MemoryStore:
             return 0
         logger.info("Decision log saved: %d entries", len(entries))
         return len(entries)
+
+    def _cap(self, entries: list[str]) -> list[str]:
+        """Every pending entry plus the ``max_entries`` most recent settled ones.
+
+        Pending decisions are never pruned (as in upstream's own rotation):
+        dropping one would lose it before its outcome is known.
+        """
+        settled = [i for i, e in enumerate(entries) if not _is_pending(e)]
+        dropped = set(settled[: max(0, len(settled) - self._max_entries)])
+        return [e for i, e in enumerate(entries) if i not in dropped]
 
     def recall(self, situation: str, n_matches: int = 2) -> dict[str, list[dict[str, Any]]]:
         """BM25-rank stored lessons against *situation*.

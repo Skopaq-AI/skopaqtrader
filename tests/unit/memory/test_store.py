@@ -130,15 +130,36 @@ class TestSave:
         assert store.save(FakeGraph(tmp_path / "log.md")) == 0
         store._repo.upsert.assert_not_called()
 
-    def test_applies_fifo_cap(self, tmp_path):
-        graph = FakeGraph(tmp_path / "log.md")
-        for day in range(1, 6):
-            graph.memory_log.store_decision("TCS.NS", f"2026-09-0{day}", "**Rating**: Hold")
+    def test_cap_keeps_every_pending_and_newest_settled(self, tmp_path):
+        path = tmp_path / "log.md"
+        settled = [_settled(f"2026-09-0{day}", "TCS.NS") for day in range(1, 5)]
+        pending = [_pending("2026-08-01", "INFY.NS"), _pending("2026-09-09", "HDFC.NS")]
+        path.write_text("\n\n<!-- ENTRY_END -->\n\n".join(settled + pending), encoding="utf-8")
         store = _store(max_entries=2)
 
-        assert store.save(graph) == 2
+        assert store.save(FakeGraph(path)) == 4
         saved = store._repo.upsert.call_args.args[0].documents
-        assert [e[1:11] for e in saved] == ["2026-09-04", "2026-09-05"]
+        assert [e[1:11] for e in saved] == ["2026-08-01", "2026-09-03", "2026-09-04", "2026-09-09"]
+
+    def test_merges_entries_already_in_supabase(self, tmp_path):
+        """A failed load or another process's writes must not be overwritten."""
+        graph = FakeGraph(tmp_path / "log.md")
+        graph.memory_log.store_decision("TCS.NS", "2026-09-24", "**Rating**: Buy")
+        remote = [_settled("2026-09-10", "INFY.NS"), _pending("2026-09-20", "HDFC.NS")]
+        store = _store(AgentMemoryRecord(role=DECISION_LOG_ROLE, documents=remote))
+
+        assert store.save(graph) == 3
+        saved = store._repo.upsert.call_args.args[0].documents
+        assert [e.split(" | ")[1] for e in saved] == ["INFY.NS", "HDFC.NS", "TCS.NS"]
+
+    def test_unreadable_remote_is_not_overwritten(self, tmp_path):
+        graph = FakeGraph(tmp_path / "log.md")
+        graph.memory_log.store_decision("TCS.NS", "2026-09-24", "**Rating**: Buy")
+        store = _store()
+        store._repo.get_by_role.side_effect = RuntimeError("timeout")
+
+        assert store.save(graph) == 0
+        store._repo.upsert.assert_not_called()
 
     def test_survives_upsert_error(self, tmp_path):
         graph = FakeGraph(tmp_path / "log.md")
@@ -190,3 +211,62 @@ class TestRecall:
         ]
         assert store.recall("anything") == {}
 
+
+
+# ── realized outcome on SELL (SkopaqTradingGraph.reflect) ────────────────────
+
+
+class TestRealizedOutcome:
+    def _graph(self, tmp_path, monkeypatch, closes):
+        from unittest.mock import MagicMock
+
+        import pandas as pd
+
+        from skopaq.graph.skopaq_graph import SkopaqTradingGraph
+        from tradingagents.dataflows.vendors.yahoo import market
+
+        if closes is None:
+            def no_prices(*_):
+                raise RuntimeError("yahoo down")
+            monkeypatch.setattr(market, "get_closes", no_prices)
+        else:
+            monkeypatch.setattr(market, "get_closes", lambda *_: pd.Series(closes))
+
+        upstream = MagicMock()
+        upstream.memory_log = TradingMemoryLog({"memory_log_path": str(tmp_path / "log.md")})
+        upstream.config = {"benchmark_map": {".NS": "^NSEI", "": "SPY"}}
+        upstream.reflector.reflect_on_final_decision.return_value = "Exit was right."
+        graph = SkopaqTradingGraph({"yfinance_symbol_suffix": ".NS"}, MagicMock())
+        graph._graph = upstream
+        return graph, upstream
+
+    def test_settles_the_opening_decision_with_realized_return(self, tmp_path, monkeypatch):
+        graph, upstream = self._graph(tmp_path, monkeypatch, closes=[100.0, 101.0])
+        upstream.memory_log.store_decision("INFY.NS", "2026-09-01", "**Rating**: Buy")
+        upstream.memory_log.store_decision("INFY.NS", "2026-09-10", "**Rating**: Buy")
+
+        graph.reflect("Realized P&L: -120 INR", symbol="INFY",
+                      realized_return=-0.012, opened_on="2026-09-10")
+
+        entries = {e["date"]: e for e in upstream.memory_log.load_entries()}
+        assert entries["2026-09-01"]["pending"]  # not the trade's decision
+        settled = entries["2026-09-10"]
+        assert not settled["pending"]
+        assert settled["raw"] == "-1.2%"
+        assert settled["alpha"] == "-2.2%"  # vs Nifty's +1%
+        assert settled["reflection"] == "Exit was right."
+        kwargs = upstream.reflector.reflect_on_final_decision.call_args.kwargs
+        assert kwargs["benchmark_name"] == "^NSEI"
+        assert "Realized P&L: -120 INR" in kwargs["final_decision"]
+        upstream.settle_pending.assert_called_once_with("INFY.NS")
+
+    def test_benchmark_unavailable_uses_raw_return(self, tmp_path, monkeypatch):
+        graph, upstream = self._graph(tmp_path, monkeypatch, closes=None)
+        upstream.memory_log.store_decision("TCS.NS", "2026-09-10", "**Rating**: Overweight")
+
+        graph.reflect("P&L", symbol="TCS", realized_return=0.03)
+
+        entry = upstream.memory_log.load_entries()[0]
+        assert (entry["raw"], entry["alpha"]) == ("+3.0%", "+3.0%")
+        kwargs = upstream.reflector.reflect_on_final_decision.call_args.kwargs
+        assert "unavailable" in kwargs["benchmark_name"]

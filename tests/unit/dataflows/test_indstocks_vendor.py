@@ -97,3 +97,43 @@ class TestNormalizeSymbol:
 
         assert _normalize_symbol("RELIANCE.NS") == "RELIANCE"
         assert _normalize_symbol("TCS") == "TCS"
+
+
+class TestHistoricalWindow:
+    def test_end_date_candle_included(self, monkeypatch):
+        """The window runs to the end of end_date (IST), like the yfinance vendor."""
+        import asyncio
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import AsyncMock, MagicMock
+
+        from tradingagents.dataflows.vendors import indstocks
+
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        candle = MagicMock(open=1.0, high=1.0, low=1.0, close=1.0, volume=10,
+                           timestamp=datetime(2026, 9, 24))
+        client.get_historical = AsyncMock(return_value=[candle])
+        monkeypatch.setattr(indstocks, "_get_client", lambda: client)
+        monkeypatch.setattr(indstocks, "_resolve_scrip_code", AsyncMock(return_value="NSE_2885"))
+
+        asyncio.run(indstocks._fetch_historical("RELIANCE", "2026-09-20", "2026-09-24"))
+
+        ist = timezone(timedelta(hours=5, minutes=30))
+        end_ms = client.get_historical.call_args.kwargs["end_time"]
+        assert end_ms == int(datetime(2026, 9, 25, tzinfo=ist).timestamp() * 1000) - 1
+
+
+class TestCryptoPairs:
+    def test_funding_accepts_yfinance_pair(self):
+        from tradingagents.dataflows.vendors.crypto_funding import _normalize_symbol
+
+        assert _normalize_symbol("BTC-USD") == "BTCUSDT"
+        assert _normalize_symbol("ETHUSDT") == "ETHUSDT"
+        assert _normalize_symbol("sol") == "SOLUSDT"
+
+    def test_defi_accepts_yfinance_pair(self):
+        from tradingagents.dataflows.vendors.crypto_defi import _strip_coin
+
+        assert _strip_coin("BTC-USD") == "BTC"
+        assert _strip_coin("ETHUSDT") == "ETH"

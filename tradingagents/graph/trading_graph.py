@@ -68,7 +68,8 @@ class TradingAgentsGraph:
         # deep-copies on every read. An "llm_map" key in config is accepted too.
         if "llm_map" in self.config:
             self.config = dict(self.config)
-            llm_map = llm_map or self.config.pop("llm_map")
+            config_llm_map = self.config.pop("llm_map")
+            llm_map = llm_map or config_llm_map
         self.llm_map = llm_map or {}
 
         set_config(self.config)

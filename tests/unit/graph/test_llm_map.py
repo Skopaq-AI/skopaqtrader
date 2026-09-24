@@ -59,3 +59,37 @@ def test_trading_graph_keeps_llm_map_out_of_config(monkeypatch, tmp_path):
 
     assert "llm_map" not in graph.config
     assert graph.graph_setup.llm_map == {"market_analyst": marker}
+
+
+def test_llm_map_in_config_removed_even_when_passed_explicitly(monkeypatch, tmp_path):
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.graph import trading_graph
+
+    monkeypatch.setattr(trading_graph, "create_llm_client", lambda **_: MagicMock())
+    explicit = {"market_analyst": MagicMock(name="explicit")}
+    config = {
+        **DEFAULT_CONFIG,
+        "results_dir": str(tmp_path / "results"),
+        "data_cache_dir": str(tmp_path / "cache"),
+        "memory_log_path": str(tmp_path / "memory.md"),
+        "llm_map": {"market_analyst": MagicMock(name="from_config")},
+    }
+    graph = trading_graph.TradingAgentsGraph(
+        selected_analysts=["market"], config=config, llm_map=explicit
+    )
+
+    assert "llm_map" not in graph.config
+    assert graph.llm_map is explicit
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (72, 72), ("85%", 85), (0.82, 82), ("0.5", 50), (1, 1), (100, 100),
+    (0, 0), (150, None), ("high", None), (None, None), (True, None),
+])
+def test_portfolio_decision_confidence_coercion(raw, expected):
+    from tradingagents.agents.schemas import PortfolioDecision
+
+    decision = PortfolioDecision(
+        rating="Buy", executive_summary="s", investment_thesis="t", confidence=raw
+    )
+    assert decision.confidence == expected
