@@ -283,7 +283,7 @@ class Executor:
         if order.side != Side.SELL:
             return []
         try:
-            return await self._router.get_holdings()
+            return await self._router.get_settled_holdings()
         except Exception:
             logger.warning("Could not fetch holdings — SELL checked against positions only",
                            exc_info=True)

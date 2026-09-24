@@ -453,7 +453,7 @@ async def check_safety(
         entry_price=price if price else None, reasoning="Safety check",
     )
     positions = await router.get_positions()
-    holdings = await router.get_holdings()
+    holdings = await router.get_settled_holdings()
     funds = await router.get_funds()
 
     result = safety.validate(
@@ -568,7 +568,7 @@ async def place_order(
 
     # Safety check first
     positions = await router.get_positions()
-    holdings = await router.get_holdings()
+    holdings = await router.get_settled_holdings()
     funds = await router.get_funds()
     safety_result = safety.validate(
         order, signal, positions, funds,

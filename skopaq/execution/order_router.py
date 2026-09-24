@@ -128,6 +128,18 @@ class OrderRouter:
             return await self._live.get_holdings()
         return self._paper.get_holdings()
 
+    async def get_settled_holdings(self) -> list[Holding]:
+        """Holdings not already counted in positions, for the no-short-sale check.
+
+        Live: the broker's delivery holdings (earlier days' shares), which its
+        positions (today's net quantities) do not include. Paper: none — the
+        paper engine's positions are its whole book and its holdings only
+        mirror them, so counting both would double every share.
+        """
+        if self._mode == "live" and self._live:
+            return await self._live.get_holdings()
+        return []
+
     async def get_funds(self) -> Funds:
         """Get funds from the active backend."""
         if self._mode == "live" and self._live:

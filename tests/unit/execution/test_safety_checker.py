@@ -506,3 +506,17 @@ class TestNoShortSale:
 
     def test_buy_is_unaffected(self):
         assert self._validate(_buy_order(qty=1, price=100)).passed
+
+    def test_holding_sold_earlier_today_no_longer_counts(self):
+        """Holdings still say 10 until settlement; today's net position is -10."""
+        from skopaq.broker.models import Holding
+
+        holdings = [Holding(symbol="RELIANCE", quantity=10)]
+        result = self._validate(_sell_order(qty=10), positions=_held(qty=-10), holdings=holdings)
+        assert any("only 0 held" in r for r in result.rejections)
+
+    def test_holding_plus_todays_buy_is_sellable(self):
+        from skopaq.broker.models import Holding
+
+        holdings = [Holding(symbol="RELIANCE", quantity=10)]
+        assert self._validate(_sell_order(qty=15), positions=_held(qty=5), holdings=holdings).passed
