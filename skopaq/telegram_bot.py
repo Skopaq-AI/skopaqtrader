@@ -28,6 +28,7 @@ import logging
 import os
 import re
 from datetime import timezone
+from typing import TYPE_CHECKING
 
 
 def _clean_markdown(text: str) -> str:
@@ -49,6 +50,9 @@ def _clean_markdown(text: str) -> str:
     return text.strip()
 
 from telegram import Update
+
+if TYPE_CHECKING:
+    from skopaq.chat.session import ChatSession
 from telegram.ext import (
     Application,
     CommandHandler,

@@ -199,7 +199,7 @@ class BinanceSpotExchange(BaseExchange):
         ws = BinanceWS()
         return ws.trade_stream(symbol)
 
-    def depth_stream(self, symbol: str, level: int = 100) -> AsyncGenerator[OrderBookData, None]:
+    def depth_stream(self, symbol: str, level: int = 20) -> AsyncGenerator[OrderBookData, None]:
         """Stream order book updates."""
         ws = BinanceWS()
         return ws.depth_stream(symbol, level)

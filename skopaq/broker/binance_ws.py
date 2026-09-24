@@ -133,7 +133,7 @@ class BinanceWS:
         self._reconnect_delay = reconnect_delay
         self._ws: Optional[WebSocketClientProtocol] = None
         self._subscriptions: set[str] = set()
-        self._running = False
+        self._running = True  # until close(); every stream checks it per message
 
     async def _connect(self, streams: list[str]) -> WebSocketClientProtocol:
         """Establish WebSocket connection with subscriptions."""
@@ -164,7 +164,7 @@ class BinanceWS:
                 ws = await self._connect(streams)
                 async for msg in ws:
                     if not self._running:
-                        break
+                        return  # closed: end the stream instead of reconnecting
 
                     data = json.loads(msg)
                     ticker = data.get("data", data)
@@ -211,7 +211,7 @@ class BinanceWS:
                 ws = await self._connect([stream])
                 async for msg in ws:
                     if not self._running:
-                        break
+                        return  # closed: end the stream instead of reconnecting
 
                     data = json.loads(msg)
                     trade = data.get("data", data)
@@ -238,25 +238,31 @@ class BinanceWS:
                     raise BinanceWSError(f"Trade stream failed: {e}") from e
 
     async def depth_stream(
-        self, symbol: str, level: int = 100
+        self, symbol: str, level: int = 20
     ) -> AsyncGenerator[OrderBookData, None]:
-        """Stream order book updates for a symbol.
+        """Stream order book snapshots for a symbol.
+
+        Uses Binance's partial book depth stream
+        (``<symbol>@depth<levels>@100ms``), which offers 5, 10 or 20 levels;
+        any other *level* is served as 20.
 
         Args:
             symbol: Trading pair
-            level: Depth level (5, 10, 20, 50, 100, 500, 1000, 5000)
+            level: Depth level (5, 10 or 20)
 
         Yields:
             OrderBookData snapshots
         """
-        stream = f"{symbol.lower()}@depth{level}@{stream_type}"
+        if level not in (5, 10, 20):
+            level = 20
+        stream = f"{symbol.lower()}@depth{level}@100ms"
 
         while True:
             try:
                 ws = await self._connect([stream])
                 async for msg in ws:
                     if not self._running:
-                        break
+                        return  # closed: end the stream instead of reconnecting
 
                     data = json.loads(msg)
                     depth = data.get("data", data)
@@ -268,7 +274,8 @@ class BinanceWS:
                     asks = [OrderBookEntry(float(p), float(q)) for p, q in depth.get("asks", [])]
 
                     yield OrderBookData(
-                        symbol=depth["s"],
+                        # Partial depth payloads carry no symbol field.
+                        symbol=depth.get("s", symbol.upper()),
                         bids=bids,
                         asks=asks,
                         last_update_id=depth["lastUpdateId"],
@@ -305,7 +312,7 @@ class BinanceWS:
                 ws = await self._connect([stream])
                 async for msg in ws:
                     if not self._running:
-                        break
+                        return  # closed: end the stream instead of reconnecting
 
                     data = json.loads(msg)
                     kline = data.get("data", {}).get("k", {})
