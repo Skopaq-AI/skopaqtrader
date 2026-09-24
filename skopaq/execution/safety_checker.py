@@ -196,13 +196,18 @@ class SafetyChecker:
         A SELL signal on a stock we do not own (e.g. a Sell rating on a
         scanner candidate) would otherwise become a short delivery sale.
         Option writes are handled by the naked-options check.
+
+        Sellable = settled holdings + today's net positions, both signed: a
+        position is negative after selling earlier holdings today, so those
+        shares are no longer counted. ``holdings`` must not repeat
+        ``positions`` (``OrderRouter.get_settled_holdings``).
         """
         if order.side != Side.SELL or _OPTION_RE.search(order.symbol):
             return
         symbol = _base_symbol(order.symbol)
         held = sum(
-            (item.quantity for item in [*positions, *holdings]
-             if _base_symbol(item.symbol) == symbol and item.quantity > 0),
+            (item.quantity for item in [*holdings, *positions]
+             if _base_symbol(item.symbol) == symbol),
             start=type(order.quantity)(0),
         )
         if held < order.quantity:

@@ -670,7 +670,7 @@ async def check_safety(
         )
 
         positions = await infra.order_router.get_positions()
-        holdings = await infra.order_router.get_holdings()
+        holdings = await infra.order_router.get_settled_holdings()
         funds = await infra.order_router.get_funds()
         portfolio_value = funds.available_cash + funds.used_margin
 

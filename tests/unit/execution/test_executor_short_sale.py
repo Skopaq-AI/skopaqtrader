@@ -51,3 +51,32 @@ async def test_sell_after_buy_is_allowed():
 
     sold = await executor.execute_signal(_signal("SELL"))
     assert sold.safety_passed, sold.rejection_reason
+
+
+@pytest.mark.asyncio
+async def test_paper_shares_are_not_counted_twice():
+    """Paper holdings mirror paper positions; only one of them may count."""
+    executor, paper = _executor()
+    assert (await executor.execute_signal(_signal("BUY"))).success
+
+    oversell = _signal("SELL").model_copy(update={"quantity": Decimal("2")})
+    result = await executor.execute_signal(oversell)
+
+    assert not result.safety_passed
+    assert "only 1 held" in result.rejection_reason
+    assert paper.get_positions()[0].quantity == 1
+
+
+@pytest.mark.asyncio
+async def test_live_router_returns_broker_holdings():
+    config = MagicMock()
+    config.trading_mode = "live"
+    live = MagicMock()
+
+    async def holdings():
+        return ["from broker"]
+
+    live.get_holdings = holdings
+    router = OrderRouter(config, PaperEngine(initial_capital=1), live_client=live)
+
+    assert await router.get_settled_holdings() == ["from broker"]
