@@ -358,6 +358,11 @@ skopaq daemon --once --max-trades 1    # Live mode, 1 trade max (requires confir
 # Position monitor (attach to existing open positions)
 skopaq monitor                         # Monitor all open positions until EOD
 
+# Agent memory
+skopaq settle                          # Settle past decisions whose holding window has traded
+skopaq memory legacy --export old.json # Back up the pre-v0.5.1 per-agent memories
+skopaq memory legacy --delete          # Delete them (writes a backup first, then asks)
+
 # Start API server
 skopaq serve --port 8000
 

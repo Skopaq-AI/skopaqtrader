@@ -388,3 +388,13 @@ class MemoryRepository:
         if result.data:
             return AgentMemoryRecord(**result.data[0])
         return None
+
+    def delete_by_role(self, role: str) -> int:
+        """Delete a role's memory row; returns the number of rows deleted."""
+        result = (
+            self._client.table(self._table)
+            .delete()
+            .eq("role", role)
+            .execute()
+        )
+        return len(result.data or [])

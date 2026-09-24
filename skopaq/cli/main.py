@@ -26,6 +26,8 @@ from skopaq.cli.display import (
     display_daemon_report,
     display_daemon_start,
     display_error,
+    display_info,
+    display_legacy_memories,
     display_monitor_ai_decision,
     display_monitor_result,
     display_monitor_start,
@@ -55,6 +57,9 @@ app = typer.Typer(
 
 token_app = typer.Typer(help="INDstocks API token management.")
 app.add_typer(token_app, name="token")
+
+memory_app = typer.Typer(help="Agent memory stored in Supabase.")
+app.add_typer(memory_app, name="memory")
 
 
 @token_app.command("set")
@@ -555,6 +560,58 @@ def settle() -> None:
     display_success(f"Settled {settled} past decision(s).")
 
 
+@memory_app.command("legacy")
+def memory_legacy(
+    export: str = typer.Option("", "--export", help="Write the rows to this JSON file."),
+    delete: bool = typer.Option(
+        False, "--delete", help="Delete the rows from Supabase (exports them first)."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Delete without asking for confirmation."),
+) -> None:
+    """Show, export or delete the per-agent memories from before the v0.5.1 sync.
+
+    Upstream replaced them with the decision log. Until deleted they are
+    still searched by the recall_agent_memories MCP tool.
+    """
+    import json
+    from pathlib import Path
+
+    from skopaq.config import SkopaqConfig
+
+    config = SkopaqConfig()
+    store = _create_memory_store(config, require_reflection=False)
+    if store is None:
+        display_error("Supabase is not configured (SKOPAQ_SUPABASE_URL / SERVICE_KEY).")
+        raise typer.Exit(1)
+
+    records = store.legacy_records()
+    if not records:
+        display_info("No legacy memory rows in Supabase.")
+        return
+    display_legacy_memories(records)
+
+    if delete and not export:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        export = f"legacy-memories-{stamp}.json"
+    if export:
+        payload = {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "rows": [r.model_dump(mode="json") for r in records],
+        }
+        Path(export).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        display_success(f"Exported {len(records)} row(s) to {export}")
+
+    if not delete:
+        return
+    if not yes and not typer.confirm(
+        f"Delete {len(records)} legacy row(s) from Supabase? This cannot be undone."
+    ):
+        display_info("Nothing deleted.")
+        return
+    deleted = store.delete_legacy([r.role for r in records])
+    display_success(f"Deleted {deleted} legacy row(s). Backup: {export}")
+
+
 @app.command("monitor")
 def monitor(
     poll_interval: int = typer.Option(0, help="Poll interval in seconds (0 = use config)."),
@@ -909,12 +966,13 @@ def _build_upstream_config(config) -> dict:
     return upstream
 
 
-def _create_memory_store(config):
+def _create_memory_store(config, require_reflection: bool = True):
     """Create a MemoryStore if reflection is enabled and Supabase is configured.
 
     Returns None if either condition is not met (graceful degradation).
+    ``require_reflection=False`` skips the reflection check (memory admin).
     """
-    if not config.reflection_enabled:
+    if require_reflection and not config.reflection_enabled:
         return None
 
     if not config.supabase_url or not config.supabase_service_key.get_secret_value():

@@ -74,6 +74,8 @@ skopaq scan                # Scanner cycle
 skopaq chat                # Interactive AI chatbot (Claude Code-style)
 skopaq daemon --once --paper  # Full autonomous session
 skopaq monitor             # Monitor existing positions
+skopaq settle              # Settle past decisions whose holding window has traded
+skopaq memory legacy       # Show pre-v0.5.1 agent memories (--export FILE, --delete)
 skopaq serve               # FastAPI server
 ```
 
