@@ -115,6 +115,9 @@ one line, which upstream's rating parser ignores.
   (`_isolated_analyst`), seeded with the run's opening message, so analysts
   never see or route on each other's tool calls; only the analyst's report
   is written back. No `Msg Clear` nodes are needed in this mode.
+- `TradingAgentsGraph._run_signature` appends `parallel=1` in this mode, so
+  a checkpoint from a sequential run never resumes into the parallel graph
+  (whose nodes differ). Sequential signatures are unchanged.
 
 **Why:** the analysts are independent, and running them together cuts
 analysis time (about 18% with the four equity analysts on the v0.2.0 base).
