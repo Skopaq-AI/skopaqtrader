@@ -228,3 +228,70 @@ def test_parallel_graph_fans_out_and_joins(monkeypatch):
         assert ("__start__", analyst) in edges
         assert (analyst, "Bull Researcher") in edges
     assert not any(node.startswith(("Msg Clear", "tools_")) for node in graph.nodes)
+
+
+@pytest.mark.asyncio
+async def test_analysis_to_paper_fill_with_jev(tmp_path, monkeypatch, offline):
+    """Agents → Portfolio Manager → Jev → Executor → SafetyChecker → paper fill."""
+    import json
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    import httpx2
+
+    from skopaq.broker.models import Quote
+    from skopaq.broker.paper_engine import PaperEngine
+    from skopaq.constants import SafetyRules
+    from skopaq.execution.executor import Executor
+    from skopaq.execution.order_router import OrderRouter
+    from skopaq.execution.safety_checker import SafetyChecker
+    from skopaq.graph.skopaq_graph import SkopaqTradingGraph
+    from skopaq.llm.jev import Jev
+
+    asked = []
+
+    def jev_api(request: httpx2.Request) -> httpx2.Response:
+        asked.append(json.loads(request.content))
+        return httpx2.Response(200, json={
+            "model": "jev-1.13.0",
+            "answers": {"answer": {"type": "choice", "choice": "BUY", "confidence": 0.6,
+                                   "probabilities": {"BUY": 0.81, "HOLD": 0.15, "SELL": 0.04}}},
+            "usage": {"input_tokens": 200, "output_tokens": 3},
+        })
+
+    paper = PaperEngine(initial_capital=1_000_000)
+    paper.update_quote(Quote(symbol="RELIANCE", ltp=2500.0, close=2500.0))
+    config = MagicMock()
+    config.trading_mode = "paper"
+    executor = Executor(OrderRouter(config, paper), SafetyChecker(rules=SafetyRules(
+        market_hours_only=False, require_stop_loss=False, max_lots_per_position=10000,
+        max_order_value_inr=10_000_000, max_position_pct=1.0,
+    )))
+    monkeypatch.setattr(Executor, "_fetch_current_price", staticmethod(lambda s: 2500.0))
+
+    graph = _skopaq_graph(tmp_path, monkeypatch, {"_default": ScriptedModel(confidence=77)})
+    graph = SkopaqTradingGraph(
+        graph._upstream_config, executor,
+        jev=Jev(api_key="test", transport=httpx2.MockTransport(jev_api)),
+    )
+
+    result = await graph.analyze_and_execute("RELIANCE", TRADE_DATE)
+
+    assert result.error is None, result.error
+    # Jev read the Portfolio Manager's decision; its probability is the confidence
+    assert "**Rating**: Overweight" in asked[0]["state"]["decision"]
+    assert result.signal.action == "BUY"
+    assert result.signal.confidence == 81
+    assert result.signal.reasoning.startswith("[Jev jev-1.13.0: BUY")
+    # ... and the signal filled on the paper engine through the safety checker
+    assert result.execution.success, result.execution.rejection_reason
+    assert result.execution.mode == "paper"
+    held = paper.get_positions()[0].quantity
+    assert held > 0
+
+    # Selling more than was bought is refused by the no-short-sale check
+    oversell = result.signal.model_copy(
+        update={"action": "SELL", "quantity": Decimal(held) + 1})
+    refused = await executor.execute_signal(oversell)
+    assert not refused.safety_passed
+    assert "No short sales" in refused.rejection_reason
