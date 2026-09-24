@@ -158,6 +158,9 @@ class SkopaqConfig(BaseSettings):
 
     # ── Telegram Bot ────────────────────────────────────────────────────────
     telegram_bot_token: SecretStr = SecretStr("")
+    # Comma-separated chat IDs allowed to use the bot, besides
+    # SKOPAQ_TELEGRAM_CHAT_ID; none = nobody (/start replies with the chat ID).
+    telegram_allowed_chat_ids: str = ""
 
     # ── Database (Fly.io Postgres) ──────────────────────────────────────────
     database_url: str = ""  # Set by Fly.io attachment or manually

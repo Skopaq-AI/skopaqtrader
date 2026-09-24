@@ -20,14 +20,20 @@ Add the token to your `.env`:
 SKOPAQ_TELEGRAM_BOT_TOKEN=7123456789:AAH-abc123def456ghi789jkl
 ```
 
-Optionally set a default chat ID for notifications:
+Set your chat ID. The bot is private: it answers only this chat and any
+listed in `SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS`, and sends notifications here.
 
 ```bash
 SKOPAQ_TELEGRAM_CHAT_ID=123456789
+# Optional: more chats allowed to use the bot (comma-separated)
+SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS=
 ```
 
 !!! tip "Finding your chat ID"
-    Send `/start` to your bot, then check the logs. The chat ID is printed when the bot receives the first message. Alternatively, send a message to `@userinfobot`.
+    Send `/start` to your bot: until your chat is allowed, it replies with the chat ID to add. Alternatively, send a message to `@userinfobot`.
+
+!!! warning "Trades need /confirm"
+    When a chat message leads the agent to a trade, the bot shows the trade and waits for `/confirm` (or `/cancel`) before executing it. `/halt REASON` and `/resume` work the kill switch.
 
 ### Step 3: Configure Bot Commands (Optional)
 
