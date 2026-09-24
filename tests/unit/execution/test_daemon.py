@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -476,3 +477,37 @@ def test_sell_analyst_accepts_min_profit_params():
     params = list(sig.parameters.keys())
     assert "min_profit_threshold_pct" in params
     assert "estimated_round_trip_brokerage" in params
+
+
+@pytest.mark.asyncio
+async def test_close_phase_records_force_sells(daemon):
+    """EOD force-sells are persisted like any other exit."""
+    from skopaq.broker.models import Position
+
+    daemon._router = AsyncMock()
+    daemon._router.get_positions = AsyncMock(return_value=[
+        Position(symbol="TCS", quantity=Decimal("3"), average_price=4000.0)])
+    sold = MagicMock(success=True)
+    daemon._executor = AsyncMock()
+    daemon._executor.execute_signal = AsyncMock(return_value=sold)
+
+    with patch.object(daemon, "_record_exit", new_callable=AsyncMock) as record:
+        await daemon._phase_close()
+
+    signal, execution = record.await_args.args
+    assert (signal.symbol, signal.action, signal.entry_price) == ("TCS", "SELL", 4000.0)
+    assert execution is sold
+
+
+@pytest.mark.asyncio
+async def test_record_exit_goes_through_the_trade_lifecycle(daemon):
+    from skopaq.broker.models import TradingSignal
+
+    signal = TradingSignal(symbol="TCS", action="SELL", confidence=100, entry_price=4000.0)
+    daemon._config.reflection_enabled = False
+    with patch("skopaq.cli.main._run_lifecycle", new_callable=AsyncMock) as lifecycle:
+        await daemon._record_exit(signal, MagicMock(success=True))
+
+    config, graph, _store, result = lifecycle.await_args.args
+    assert graph is None  # reflection off: record only
+    assert (result.symbol, result.signal) == ("TCS", signal)

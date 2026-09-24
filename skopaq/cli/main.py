@@ -166,6 +166,8 @@ async def _run_analyze(symbol: str, trade_date: str):
     safety = SafetyChecker(
         max_sector_concentration_pct=config.max_sector_concentration_pct,
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
     executor = Executor(router, safety)
 
     # Build upstream config (uses upstream defaults + our keys)
@@ -281,6 +283,8 @@ async def _run_trade(symbol: str, trade_date: str):
         rules=rules,
         max_sector_concentration_pct=config.max_sector_concentration_pct,
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
 
     # ATR-based position sizer (optional — also works for crypto via yfinance)
     sizer = None
@@ -342,9 +346,10 @@ async def _run_trade(symbol: str, trade_date: str):
         if live_client is not None:
             await live_client.__aexit__(None, None, None)
 
-    # Post-execution: track lifecycle (BUY/SELL linkage + reflection)
-    if config.reflection_enabled and memory_store is not None:
-        await _run_lifecycle(config, graph, memory_store, result)
+    # Post-execution: persist the trade (its P&L feeds the loss limits) and,
+    # when reflection is on, link BUY/SELL and reflect.
+    await _run_lifecycle(config, _reflection_graph(config, graph, memory_store),
+                         memory_store, result)
 
     return result
 
@@ -681,6 +686,8 @@ async def _run_monitor(config, ai_enabled: bool):
         rules=rules,
         max_sector_concentration_pct=config.max_sector_concentration_pct,
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
     executor = Executor(router, safety)
 
     # Build LLM for sell analyst (if AI enabled)
@@ -721,6 +728,8 @@ async def _run_monitor(config, ai_enabled: bool):
             llm=llm,
             stop_event=stop_event,
             ai_enabled=ai_enabled,
+            # No analysis graph here: record the exit and its P&L, no reflection.
+            on_exit=lambda signal, execution: _record_exit(config, None, None, signal, execution),
         )
         return await monitor_instance.run()
 
@@ -998,12 +1007,39 @@ def _create_memory_store(config, require_reflection: bool = True):
         return None
 
 
+def _reflection_graph(config, graph, memory_store):
+    """The graph to reflect with, or ``None`` when reflection is off."""
+    if config.reflection_enabled and memory_store is not None:
+        return graph
+    return None
+
+
+async def _record_exit(config, graph, memory_store, signal, execution) -> None:
+    """Persist an exit that did not come from an analysis (monitor, EOD close).
+
+    It goes through the same lifecycle as an analysed trade, so the opening
+    BUY row is closed with its realized P&L, which the loss limits read back
+    (``skopaq.execution.pnl_history``).
+    """
+    from datetime import timedelta
+
+    from skopaq.graph.skopaq_graph import AnalysisResult
+
+    ist_today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date().isoformat()
+    result = AnalysisResult(
+        symbol=signal.symbol, trade_date=ist_today, signal=signal, execution=execution,
+    )
+    await _run_lifecycle(config, _reflection_graph(config, graph, memory_store),
+                         memory_store, result)
+
+
 async def _run_lifecycle(config, graph, memory_store, result):
     """Run trade lifecycle tracking (BUY/SELL linkage + auto-reflection).
 
     Flow:
         1. Persist the trade to Supabase (so find_open_buy() works for future SELLs)
-        2. Run lifecycle manager (BUY/SELL linkage + reflection)
+        2. Run lifecycle manager (BUY/SELL linkage + reflection; ``graph=None``
+           links and records P&L without reflecting)
 
     Silently does nothing if Supabase is not configured.
     """

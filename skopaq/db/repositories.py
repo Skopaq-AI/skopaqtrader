@@ -133,6 +133,22 @@ class TradeRepository:
         )
         return [TradeRecord(**row) for row in (result.data or [])]
 
+    def get_closed_since(self, since: datetime, is_paper: bool) -> list[TradeRecord]:
+        """Opening BUYs closed at or after *since*, carrying their realized P&L.
+
+        The lifecycle writes a position's P&L to both its BUY and its SELL
+        row; reading the BUY rows alone counts each closed position once.
+        """
+        result = (
+            self._client.table(self._table)
+            .select("*")
+            .eq("side", "BUY")
+            .eq("is_paper", is_paper)
+            .gte("closed_at", since.isoformat())
+            .execute()
+        )
+        return [TradeRecord(**row) for row in (result.data or [])]
+
     def find_open_buy(self, symbol: str) -> Optional[TradeRecord]:
         """Find the most recent BUY trade for *symbol* that hasn't been closed.
 

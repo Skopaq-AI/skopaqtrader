@@ -541,3 +541,39 @@ REASONING: Strong momentum, no reversal signals yet."""
         text = "DECISION: SELL\nCONFIDENCE: 150\nREASONING: test"
         decision = _parse_decision(text)
         assert decision.confidence == 100  # Clamped to max
+
+
+class TestExitRecording:
+    """on_exit persists each successful sell (its P&L feeds the loss limits)."""
+
+    def _monitor(self, config, executor, on_exit):
+        mon = PositionMonitor(executor=executor, client=MagicMock(), router=MagicMock(),
+                              config=config, ai_enabled=False, on_exit=on_exit)
+        mon._router._paper = MagicMock()
+        return mon
+
+    @pytest.mark.asyncio
+    async def test_successful_sell_is_recorded(self, config, mock_executor):
+        recorded = []
+
+        async def on_exit(signal, execution):
+            recorded.append((signal.symbol, signal.action, signal.entry_price, execution))
+
+        mon = self._monitor(config, mock_executor, on_exit)
+        pos = MonitoredPosition(symbol="TEST", scrip_code="NSE_1", entry_price=100.0, quantity=10)
+        assert await mon._execute_sell(pos, ltp=95.0, reason="stop", result=MonitorResult())
+
+        assert recorded == [("TEST", "SELL", 100.0,
+                             mock_executor.execute_signal.return_value)]
+
+    @pytest.mark.asyncio
+    async def test_recording_failure_does_not_undo_the_sell(self, config, mock_executor):
+        async def broken(signal, execution):
+            raise RuntimeError("supabase down")
+
+        mon = self._monitor(config, mock_executor, broken)
+        pos = MonitoredPosition(symbol="TEST", scrip_code="NSE_1", entry_price=100.0, quantity=10)
+        result = MonitorResult()
+
+        assert await mon._execute_sell(pos, ltp=95.0, reason="stop", result=result)
+        assert result.sells_executed == 1

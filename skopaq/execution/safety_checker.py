@@ -412,6 +412,17 @@ class SafetyChecker:
 
     # ── P&L tracking (called externally after fills) ─────────────────────
 
+    def seed_realized_pnl(self, day: float, week: float, month: float) -> None:
+        """Start from P&L already realized this day, week and month.
+
+        Each CLI command, MCP call and daemon session builds a fresh checker;
+        without this, the loss limits would only see trades closed inside
+        the current process (``skopaq.execution.pnl_history``).
+        """
+        self._day_pnl = day
+        self._week_pnl = week
+        self._month_pnl = month
+
     def record_pnl(self, pnl: float) -> None:
         """Record a trade's P&L for loss tracking."""
         self._day_pnl += pnl

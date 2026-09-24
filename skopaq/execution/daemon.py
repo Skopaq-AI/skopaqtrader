@@ -307,6 +307,8 @@ class TradingDaemon:
             rules=rules,
             max_sector_concentration_pct=config.max_sector_concentration_pct,
         )
+        from skopaq.execution.pnl_history import seed_safety_checker
+        seed_safety_checker(safety, config)
 
         sizer = None
         if config.position_sizing_enabled:
@@ -381,7 +383,7 @@ class TradingDaemon:
         Processes candidates sequentially (capital reduces with each BUY).
         Stops after max_trades BUYs or when all candidates are exhausted.
         """
-        from skopaq.cli.main import _compute_risk_scales, _run_lifecycle
+        from skopaq.cli.main import _compute_risk_scales, _reflection_graph, _run_lifecycle
 
         config = self._config
         trade_date = datetime.now(_IST).strftime("%Y-%m-%d")
@@ -466,21 +468,19 @@ class TradingDaemon:
                         self._max_trades,
                     )
 
-                    # Post-trade lifecycle (persist to Supabase + reflection)
-                    if (
-                        config.reflection_enabled
-                        and self._memory_store is not None
-                    ):
-                        try:
-                            await _run_lifecycle(
-                                config, self._graph,
-                                self._memory_store, result,
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Lifecycle failed for %s", symbol,
-                                exc_info=True,
-                            )
+                    # Post-trade lifecycle: persist to Supabase (the loss
+                    # limits read realized P&L back) and reflect when enabled.
+                    try:
+                        await _run_lifecycle(
+                            config,
+                            _reflection_graph(config, self._graph, self._memory_store),
+                            self._memory_store, result,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Lifecycle failed for %s", symbol,
+                            exc_info=True,
+                        )
                 else:
                     report.trades_rejected += 1
                     reason = (
@@ -512,10 +512,17 @@ class TradingDaemon:
             llm=llm,
             stop_event=self._stop,
             ai_enabled=llm is not None,
+            on_exit=self._record_exit,
         )
 
         logger.info("Starting position monitor...")
         return await monitor.run()
+
+    async def _record_exit(self, signal, execution) -> None:
+        """Persist a monitor or close-phase exit like an analysed trade."""
+        from skopaq.cli.main import _record_exit
+
+        await _record_exit(self._config, self._graph, self._memory_store, signal, execution)
 
     async def _settle_due_decisions(self) -> int:
         """Settle past decisions whose holding window has traded (all tickers)."""
@@ -568,6 +575,11 @@ class TradingDaemon:
                 result = await self._executor.execute_signal(signal)
                 if result.success:
                     logger.info("Force-sold %s", pos.symbol)
+                    try:
+                        await self._record_exit(signal, result)
+                    except Exception:
+                        logger.warning("Recording force-sell of %s failed", pos.symbol,
+                                       exc_info=True)
                 else:
                     logger.error(
                         "Force-sell REJECTED for %s: %s",

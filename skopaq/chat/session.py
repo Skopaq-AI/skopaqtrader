@@ -112,6 +112,8 @@ def build_infrastructure(config: SkopaqConfig) -> Infrastructure:
         rules=rules,
         max_sector_concentration_pct=config.max_sector_concentration_pct,
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
 
     # Position sizer
     sizer = None
