@@ -49,6 +49,7 @@ class TradingAgentsGraph:
         debug=False,
         config: dict[str, Any] = None,
         callbacks: list | None = None,
+        llm_map: dict[str, Any] | None = None,
     ):
         """Initialize the trading agents graph and components.
 
@@ -57,10 +58,18 @@ class TradingAgentsGraph:
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
             callbacks: Optional list of callback handlers (e.g., for tracking LLM/tool stats)
+            llm_map: Optional per-role LLM instances (Skopaq); see GraphSetup._get_llm
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
+
+        # Skopaq: per-role LLMs stay out of the config, which the data layer
+        # deep-copies on every read. An "llm_map" key in config is accepted too.
+        if "llm_map" in self.config:
+            self.config = dict(self.config)
+            llm_map = llm_map or self.config.pop("llm_map")
+        self.llm_map = llm_map or {}
 
         set_config(self.config)
 
@@ -98,6 +107,7 @@ class TradingAgentsGraph:
             self.quick_thinking_llm,
             self.deep_thinking_llm,
             self.conditional_logic,
+            llm_map=self.llm_map,
         )
 
         self.propagator = Propagator(
@@ -352,6 +362,9 @@ class TradingAgentsGraph:
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
             "fundamentals_report": final_state["fundamentals_report"],
+            "onchain_report": final_state.get("onchain_report", ""),
+            "defi_report": final_state.get("defi_report", ""),
+            "funding_report": final_state.get("funding_report", ""),
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],
                 "bear_history": final_state["investment_debate_state"]["bear_history"],

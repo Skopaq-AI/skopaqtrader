@@ -191,6 +191,24 @@ def report_or_absent(text: str, source: str) -> str:
     return f"(No {source} report in this run: it is not available, not an empty finding.)"
 
 
+def crypto_reports_section(state: Mapping[str, Any]) -> str:
+    """Skopaq: the crypto analysts' reports as extra prompt lines.
+
+    Empty when none of the on-chain, DeFi or funding analysts ran (every
+    equity run), so those prompts are unchanged.
+    """
+    sections = (
+        ("On-Chain Network Analysis", state.get("onchain_report", "")),
+        ("DeFi/Tokenomics Analysis", state.get("defi_report", "")),
+        ("Funding Rate/Derivatives Analysis", state.get("funding_report", "")),
+    )
+    if not any((text or "").strip() for _, text in sections):
+        return ""
+    return "".join(
+        f"\n{label}: {report_or_absent(text, label.lower())}" for label, text in sections
+    )
+
+
 def get_portfolio_context_from_state(state: Mapping[str, Any]) -> str:
     """Return the caller's portfolio block, or a notice that none was given.
 

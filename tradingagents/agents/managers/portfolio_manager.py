@@ -75,6 +75,7 @@ Write these sections, in this order, starting with the rating on its own line:
 - **Rating**: exactly one of Buy / Overweight / Hold / Underweight / Sell
 - **Executive Summary**: the call and how to act on it
 - **Investment Thesis**: the evidence that decided it, and what would change it
+- **Confidence**: your conviction in the rating, a whole number from 0 to 100
 
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 

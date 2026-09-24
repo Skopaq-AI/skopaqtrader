@@ -60,6 +60,11 @@ class AgentState(MessagesState):
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
 
+    # Skopaq: crypto-specific analyst reports (empty unless asset_class == "crypto")
+    onchain_report: Annotated[str, "Report from the On-Chain Analyst"]
+    defi_report: Annotated[str, "Report from the DeFi/Tokenomics Analyst"]
+    funding_report: Annotated[str, "Report from the Funding Rate Analyst"]
+
     # researcher team discussion step
     investment_debate_state: Annotated[
         InvestDebateState, "Current state of the debate on if to invest or not"
