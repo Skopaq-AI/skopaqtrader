@@ -143,7 +143,7 @@ The bot also understands plain text queries. A message that is not a command is 
 | "trade INFY" | Explains the trade workflow |
 
 !!! note "AI brain model"
-    The natural language handler uses the `chat_brain` role from the LLM tier, which defaults to Claude Opus 4.6. If unavailable, it falls back to Gemini 3 Flash Preview.
+    The natural language handler uses the `chat_brain` role from the LLM tier, which defaults to Claude Opus 5. If unavailable, it falls back to Gemini 3.8 Flash.
 
 ## Notification Messages
 

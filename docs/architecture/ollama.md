@@ -8,9 +8,9 @@ Ollama is the last option in each agent's fallback chain. If all cloud providers
 
 ```python
 # skopaq/llm/model_tier.py — fallback chain per role
-"market_analyst":  [("google", "gemini-3-flash-preview"), ("ollama", "auto")]
-"social_analyst":  [("openrouter", "x-ai/grok-3-mini"), ..., ("ollama", "auto")]
-"trader":          [("google", "gemini-3-flash-preview"), ("ollama", "auto")]
+"market_analyst":  [("google", "gemini-3.8-flash"), ("ollama", "auto")]
+"social_analyst":  [("openrouter", "x-ai/grok-4.6"), ..., ("ollama", "auto")]
+"trader":          [("google", "gemini-3.8-flash"), ("ollama", "auto")]
 ```
 
 !!! note "Judge roles excluded"
@@ -116,7 +116,7 @@ The fallback chain is evaluated left to right for each agent role:
 
 ```
 market_analyst:
-  1. Try Google (Gemini 3 Flash Preview)
+  1. Try Google (Gemini 3.8 Flash)
      → GOOGLE_API_KEY set? → Use it
   2. Try Ollama (auto)
      → SKOPAQ_OLLAMA_ENABLED=true AND Ollama running? → Use it

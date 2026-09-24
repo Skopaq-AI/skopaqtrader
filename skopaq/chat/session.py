@@ -59,6 +59,7 @@ def build_infrastructure(config: SkopaqConfig) -> Infrastructure:
     from skopaq.execution.order_router import OrderRouter
     from skopaq.execution.safety_checker import SafetyChecker
     from skopaq.llm import bridge_env_vars, build_llm_map
+    from skopaq.llm.model_tier import GEMINI_FLASH
 
     # Bridge SKOPAQ_ → standard env vars
     bridge_env_vars(config)
@@ -154,8 +155,8 @@ def _build_upstream_config(config: SkopaqConfig, llm_map: dict) -> dict:
         "results_dir": str(Path(project_dir) / "results"),
         "data_cache_dir": str(Path(project_dir) / ".cache" / "data"),
         "llm_provider": "google",
-        "deep_think_llm": "gemini-3-flash-preview",
-        "quick_think_llm": "gemini-3-flash-preview",
+        "deep_think_llm": GEMINI_FLASH,
+        "quick_think_llm": GEMINI_FLASH,
         "backend_url": None,
         "max_debate_rounds": config.max_debate_rounds,
         "max_risk_discuss_rounds": config.max_risk_discuss_rounds,

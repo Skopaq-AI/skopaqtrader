@@ -283,6 +283,7 @@ async def analyze_stock(symbol: str, date: str = "") -> str:
     from skopaq.execution.safety_checker import SafetyChecker
     from skopaq.graph.skopaq_graph import SkopaqTradingGraph
     from skopaq.llm import build_llm_map
+    from skopaq.llm.model_tier import GEMINI_FLASH
 
     if not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -298,8 +299,8 @@ async def analyze_stock(symbol: str, date: str = "") -> str:
     is_crypto = config.asset_class == "crypto"
     upstream = {
         "llm_provider": "google",
-        "deep_think_llm": "gemini-3-flash-preview",
-        "quick_think_llm": "gemini-3-flash-preview",
+        "deep_think_llm": GEMINI_FLASH,
+        "quick_think_llm": GEMINI_FLASH,
         "llm_map": llm_map,
         "max_debate_rounds": config.max_debate_rounds,
         "max_risk_discuss_rounds": config.max_risk_discuss_rounds,

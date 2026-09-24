@@ -39,7 +39,7 @@ SKOPAQ_GOOGLE_API_KEY=your-gemini-key
 
 ```bash
 # LLM Providers
-SKOPAQ_GOOGLE_API_KEY=...          # Gemini 3 Flash (analysts)
+SKOPAQ_GOOGLE_API_KEY=...          # Gemini 3.8 Flash (analysts)
 SKOPAQ_ANTHROPIC_API_KEY=...       # Claude Opus (research/risk manager)
 SKOPAQ_OPENROUTER_API_KEY=...      # Grok + Perplexity (social + news)
 
@@ -78,8 +78,8 @@ skopaq --help    # All commands
 
 | Role | Primary | Fallback | Local |
 |------|---------|----------|-------|
-| Analysts | Gemini 3 Flash | — | Ollama |
-| Social Analyst | Grok 3 Mini | Gemini | Ollama |
+| Analysts | Gemini 3.8 Flash | — | Ollama |
+| Social Analyst | Grok 4.6 | Gemini | Ollama |
 | Research/Risk Manager | Claude Opus | Gemini | — |
 | Chat Brain | Claude Opus | Gemini | Ollama |
 | Scanner | Gemini + Grok + Perplexity | — | — |

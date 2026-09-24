@@ -202,8 +202,8 @@ flowchart TD
     CacheCheck -- "Miss" --> Gemini
 
     subgraph Screeners["Parallel Screening Cluster"]
-        Gemini["Gemini 3 Flash<br/>Tech / Fundamentals"]:::llm
-        Grok["Grok 3 Mini<br/>Social Sentiment"]:::llm
+        Gemini["Gemini 3.8 Flash<br/>Tech / Fundamentals"]:::llm
+        Grok["Grok 4.6<br/>Social Sentiment"]:::llm
         Perplexity["Perplexity Sonar<br/>Web / News Context"]:::llm
     end
 
@@ -236,16 +236,16 @@ flowchart TD
 
 | Agent Role | Primary Model | Fallback | Local Fallback |
 |------------|---------------|----------|----------------|
-| Market / Fundamentals Analyst | Gemini 3 Flash | — | Ollama (auto) |
-| Social Analyst | Grok 3 Mini (via OpenRouter) | Gemini 3 Flash | Ollama (auto) |
-| News Analyst | Gemini 3 Flash | — | Ollama (auto) |
-| Research Manager | Claude Opus 4.6 | Gemini 3 Flash | — (quality critical) |
-| Portfolio Manager | Claude Opus 4.6 | Gemini 3 Flash | — (quality critical) |
-| Chat Brain | Claude Opus 4.6 | Gemini 3 Flash | Ollama (auto) |
-| Bull / Bear / Debate Researchers | Gemini 3 Flash | — | Ollama (auto) |
-| Trader | Gemini 3 Flash | — | Ollama (auto) |
-| Sell Analyst | Gemini 3 Flash | — | Ollama (auto) |
-| Scanner Screeners | Gemini 3 Flash, Grok 3 Mini, Perplexity Sonar | (concurrent) | — |
+| Market / Fundamentals Analyst | Gemini 3.8 Flash | — | Ollama (auto) |
+| Social Analyst | Grok 4.6 (via OpenRouter) | Gemini 3.8 Flash | Ollama (auto) |
+| News Analyst | Gemini 3.8 Flash | — | Ollama (auto) |
+| Research Manager | Claude Opus 5 | Gemini 3.8 Flash | — (quality critical) |
+| Portfolio Manager | Claude Opus 5 | Gemini 3.8 Flash | — (quality critical) |
+| Chat Brain | Claude Opus 5 | Gemini 3.8 Flash | Ollama (auto) |
+| Bull / Bear / Debate Researchers | Gemini 3.8 Flash | — | Ollama (auto) |
+| Trader | Gemini 3.8 Flash | — | Ollama (auto) |
+| Sell Analyst | Gemini 3.8 Flash | — | Ollama (auto) |
+| Scanner Screeners | Gemini 3.8 Flash, Grok 4.6, Perplexity Sonar | (concurrent) | — |
 
 > **Note:** Perplexity Sonar is used only in the scanner (plain prompts). It does not support tool calling, so it cannot serve as an analyst in the LangGraph agent pipeline.
 >
@@ -316,13 +316,13 @@ cp .env.example .env
 
 ### Required API Keys
 
-At minimum, set `GOOGLE_API_KEY` for Gemini 3 Flash (used as default/fallback for all roles).
+At minimum, set `GOOGLE_API_KEY` for Gemini 3.8 Flash (used as default/fallback for all roles).
 
 For full multi-model tiering:
 
 ```bash
-GOOGLE_API_KEY=...          # Gemini 3 Flash (all analyst roles)
-ANTHROPIC_API_KEY=...       # Claude Opus 4.6 (research/risk manager)
+GOOGLE_API_KEY=...          # Gemini 3.8 Flash (all analyst roles)
+ANTHROPIC_API_KEY=...       # Claude Opus 5 (research/risk manager)
 OPENROUTER_API_KEY=...      # Grok + Perplexity Sonar (social + news)
 ```
 

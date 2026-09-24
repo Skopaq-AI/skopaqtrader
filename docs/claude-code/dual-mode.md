@@ -13,7 +13,7 @@ MCP tool: analyze_stock("RELIANCE")
                 │
     ┌───────────┼───────────┐
     ▼           ▼           ▼
- Gemini 3    Grok 3      Claude Opus
+ Gemini 3.8  Grok 4.6    Claude Opus
  (analysts)  (social)    (risk mgr)
     │           │           │
     └───────────┼───────────┘
@@ -116,9 +116,9 @@ The API mode uses the LLM tier configuration in `skopaq/llm/model_tier.py`:
 
 ```python
 # Each role has a fallback chain
-"market_analyst":       [("google", "gemini-3-flash-preview"), ("ollama", "auto")]
-"social_analyst":       [("openrouter", "x-ai/grok-3-mini"), ...]
-"research_manager":     [("anthropic", "claude-opus-4-6"), ...]
+"market_analyst":       [("google", "gemini-3.8-flash"), ("ollama", "auto")]
+"social_analyst":       [("openrouter", "x-ai/grok-4.6"), ...]
+"research_manager":     [("anthropic", "claude-opus-5"), ...]
 ```
 
 Claude-native mode requires no LLM configuration -- it uses Claude Code's own model. You only need valid broker credentials for data access.
