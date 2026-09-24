@@ -444,11 +444,13 @@ async def check_safety(
         entry_price=price if price else None, reasoning="Safety check",
     )
     positions = await router.get_positions()
+    holdings = await router.get_holdings()
     funds = await router.get_funds()
 
     result = safety.validate(
         order, signal, positions, funds,
         funds.available_cash + funds.used_margin,
+        holdings=holdings,
     )
 
     return json.dumps({
@@ -557,10 +559,12 @@ async def place_order(
 
     # Safety check first
     positions = await router.get_positions()
+    holdings = await router.get_holdings()
     funds = await router.get_funds()
     safety_result = safety.validate(
         order, signal, positions, funds,
         funds.available_cash + funds.used_margin,
+        holdings=holdings,
     )
 
     if not safety_result.passed:

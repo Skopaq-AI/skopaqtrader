@@ -15,6 +15,7 @@ from typing import Optional
 
 from skopaq.broker.models import (
     Funds,
+    Holding,
     OrderRequest,
     OrderType,
     Position,
@@ -30,6 +31,9 @@ from skopaq.constants import (
 from skopaq.risk.concentration import ConcentrationChecker
 
 logger = logging.getLogger(__name__)
+
+# NSE option contract symbols end in a strike and CE/PE, e.g. NIFTY23DEC21000CE.
+_OPTION_RE = re.compile(r"\d+(?:CE|PE)$")
 
 
 @dataclass
@@ -76,8 +80,12 @@ class SafetyChecker:
         positions: list[Position],
         funds: Funds,
         portfolio_value: float,
+        holdings: Optional[list[Holding]] = None,
     ) -> SafetyResult:
         """Run all safety checks on a proposed order.
+
+        ``holdings`` (delivery holdings) count alongside ``positions`` when
+        checking that a SELL only sells what is held.
 
         Returns a ``SafetyResult`` with ``passed=True`` if all checks pass,
         or ``passed=False`` with a list of rejection reasons.
@@ -85,6 +93,7 @@ class SafetyChecker:
         rejections: list[str] = []
 
         self._check_market_hours(rejections)
+        self._check_no_short_sale(order, positions, holdings or [], rejections)
         self._check_position_size(order, portfolio_value, rejections)
         self._check_order_value(order, rejections)
         self._check_max_positions(order, positions, rejections)
@@ -173,6 +182,32 @@ class SafetyChecker:
         if order_value > self._rules.max_order_value_inr:
             rejections.append(
                 f"Order value INR {order_value:,.0f} exceeds max INR {self._rules.max_order_value_inr:,.0f}"
+            )
+
+    def _check_no_short_sale(
+        self,
+        order: OrderRequest,
+        positions: list[Position],
+        holdings: list[Holding],
+        rejections: list[str],
+    ) -> None:
+        """Reject a SELL for more than is held — Skopaq never sells short.
+
+        A SELL signal on a stock we do not own (e.g. a Sell rating on a
+        scanner candidate) would otherwise become a short delivery sale.
+        Option writes are handled by the naked-options check.
+        """
+        if order.side != Side.SELL or _OPTION_RE.search(order.symbol):
+            return
+        symbol = _base_symbol(order.symbol)
+        held = sum(
+            (item.quantity for item in [*positions, *holdings]
+             if _base_symbol(item.symbol) == symbol and item.quantity > 0),
+            start=type(order.quantity)(0),
+        )
+        if held < order.quantity:
+            rejections.append(
+                f"No short sales: SELL {order.quantity} {order.symbol} but only {held} held"
             )
 
     def _check_max_positions(
@@ -336,7 +371,6 @@ class SafetyChecker:
         # NSE options have a strike price (digits) before CE/PE suffix,
         # e.g. NIFTY23DEC21000CE. Use regex to avoid false positives
         # on equity symbols like RELIANCE that happen to end with "CE".
-        _OPTION_RE = re.compile(r"\d+(?:CE|PE)$")
         if order.side == Side.SELL and _OPTION_RE.search(order.symbol):
             rejections.append(
                 "Naked option selling is forbidden. Ensure a protective position exists."
@@ -394,3 +428,12 @@ class SafetyChecker:
     def reset_monthly(self) -> None:
         """Reset monthly P&L counter."""
         self._month_pnl = 0.0
+
+
+def _base_symbol(symbol: str) -> str:
+    """``NSE:RELIANCE-EQ`` / ``RELIANCE.NS`` / ``reliance`` → ``RELIANCE``."""
+    symbol = symbol.upper().split(":")[-1]
+    for suffix in ("-EQ", "-BE", ".NS", ".BO"):
+        if symbol.endswith(suffix):
+            symbol = symbol[: -len(suffix)]
+    return symbol

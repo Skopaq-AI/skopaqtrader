@@ -75,6 +75,11 @@ def _buy_order(symbol="RELIANCE", qty=10, price=2500.0):
     )
 
 
+def _held(symbol="RELIANCE", qty=10):
+    """An open position, so a SELL of it is not a short sale."""
+    return [Position(symbol=symbol, quantity=qty)]
+
+
 def _sell_order(symbol="RELIANCE", qty=10, price=2500.0):
     return OrderRequest(
         symbol=symbol, exchange=Exchange.NSE, side=Side.SELL,
@@ -163,7 +168,7 @@ class TestStopLoss:
     def test_sell_without_stop_loss_passes(self, checker, funds, signal_no_sl):
         """Sell orders don't need a stop loss."""
         order = _sell_order(qty=1, price=100)
-        result = checker.validate(order, signal_no_sl, [], funds, 1_000_000)
+        result = checker.validate(order, signal_no_sl, _held(), funds, 1_000_000)
         assert result.passed
 
 
@@ -293,7 +298,7 @@ class TestMinStopLossPct:
             trigger_price=2490.0,  # Very tight — but it's a sell
             product=Product.CNC,
         )
-        result = checker.validate(order, signal_with_sl, [], funds, 1_000_000)
+        result = checker.validate(order, signal_with_sl, _held(), funds, 1_000_000)
         assert result.passed
 
 
@@ -445,7 +450,7 @@ class TestMinimumConfidence:
         checker = SafetyChecker(rules=rules)
         order = _sell_order(qty=1, price=100)
         funds = Funds(available_margin=500_000)
-        result = checker.validate(order, None, [], funds, 500_000)
+        result = checker.validate(order, None, _held(), funds, 500_000)
         assert result.passed
 
 
@@ -456,3 +461,48 @@ class TestReset:
         order = _buy_order(qty=1, price=100)
         result = checker.validate(order, signal_with_sl, [], funds, 500_000)
         assert result.passed  # Daily loss reset
+
+
+class TestNoShortSale:
+    """A SELL may only sell what is held (positions + delivery holdings)."""
+
+    def _checker(self):
+        return SafetyChecker(rules=SafetyRules(
+            market_hours_only=False, require_stop_loss=False, max_lots_per_position=10000,
+            max_order_value_inr=10_000_000, max_position_pct=1.0,
+        ))
+
+    def _validate(self, order, positions=(), holdings=None):
+        funds = Funds(available_margin=1_000_000)
+        return self._checker().validate(
+            order, None, list(positions), funds, 1_000_000, holdings=holdings
+        )
+
+    def test_sell_without_position_rejected(self):
+        result = self._validate(_sell_order(qty=1))
+        assert not result.passed
+        assert any("No short sales" in r for r in result.rejections)
+
+    def test_sell_more_than_held_rejected(self):
+        result = self._validate(_sell_order(qty=20), positions=_held(qty=10))
+        assert any("only 10 held" in r for r in result.rejections)
+
+    def test_sell_of_held_position_passes(self):
+        assert self._validate(_sell_order(qty=10), positions=_held(qty=10)).passed
+
+    def test_delivery_holding_counts(self):
+        from skopaq.broker.models import Holding
+
+        holdings = [Holding(symbol="RELIANCE", quantity=5)]
+        assert self._validate(_sell_order(qty=5), holdings=holdings).passed
+
+    def test_symbol_forms_match(self):
+        positions = [Position(symbol="NSE:RELIANCE-EQ", quantity=3)]
+        assert self._validate(_sell_order(symbol="reliance.ns", qty=3), positions=positions).passed
+
+    def test_other_symbol_does_not_count(self):
+        result = self._validate(_sell_order(symbol="TCS", qty=1), positions=_held("RELIANCE"))
+        assert not result.passed
+
+    def test_buy_is_unaffected(self):
+        assert self._validate(_buy_order(qty=1, price=100)).passed
