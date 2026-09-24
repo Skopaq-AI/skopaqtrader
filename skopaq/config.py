@@ -53,7 +53,7 @@ class SkopaqConfig(BaseSettings):
     jev_enabled: bool = False  # Jev confidence on entries + exit gate
     jev_model: str = "jev-1.13.0"  # pinned: thresholds are tuned per version
     jev_min_confidence: float = 0.6  # act on a Jev answer at or above this
-    jev_min_catalyst_score: float = 1.0  # scanner: drop candidates below (0-3)
+    jev_min_catalyst_score: float = 0.0  # scanner: drop below this (0-3); 0 ranks only
     jev_timeout_seconds: float = 5.0
 
     # ── Cloudflare Tunnel ───────────────────────────────────────────────

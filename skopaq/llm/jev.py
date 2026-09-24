@@ -9,8 +9,8 @@ prose for a decision:
   the probability of the signal's own action becomes its confidence, and a
   confident contradiction downgrades the trade to HOLD;
 - the sell analyst's analysis → SELL / HOLD, acted on only when confident;
-- a scanner candidate's reason → catalyst strength (0-3), used to drop weak
-  candidates and rank the rest before the slow full analysis.
+- a scanner candidate's reason → catalyst strength (0-3), used to rank the
+  candidates (and optionally drop weak ones) before the slow full analysis.
 
 Off unless ``SKOPAQ_JEV_ENABLED=true`` and ``SKOPAQ_TYPESAFE_API_KEY`` is set.
 Every failure returns ``None`` and callers keep their previous behavior.
@@ -51,17 +51,24 @@ EXIT_QUESTION = {
     },
 }
 
-# Scanner candidates: how strong is the screener's stated reason?  Levels are
-# the positions in "criteria" (0-3).
+# Scanner candidates: what kind of reason did the screener give?  Levels are
+# the positions in "criteria" (0-3).  They describe the kind of cause, not the
+# size of a move: Jev is weak at judging numbers.
 CATALYST_QUESTIONS = {
     "catalyst": {
         "type": "score",
-        "instructions": "How strong a reason to analyze `stock` today does `reason` give?",
+        "instructions": "What kind of reason to analyze `stock` today does `reason` give?",
         "criteria": [
-            "None: vague or generic commentary, or an ordinary price move.",
-            "Weak: a modest move or minor news that may not matter.",
-            "Clear: a specific event, result, order or flow that could move the stock.",
-            "Strong: major company-specific news, or an unusual move on heavy volume.",
+            "No reason, or only generic commentary such as 'looks strong' or 'worth watching'.",
+            "Only price or volume action, with no cause named.",
+            (
+                "A named cause that is not a major company event: sector, policy or "
+                "macro news, an index change, a rating change or a block deal."
+            ),
+            (
+                "A major company event: results, guidance, a large order or deal, a "
+                "regulatory or legal decision, or a management change."
+            ),
         ],
     },
     "specific_news": {
@@ -82,7 +89,7 @@ CATALYST_QUESTIONS = {
 class CatalystScore:
     """Jev's read of a scanner candidate's reason."""
 
-    score: float  # expected catalyst level, 0 (none) to 3 (strong)
+    score: float  # expected level: 0 generic, 1 price/volume only, 2 named cause, 3 major event
     confidence: float  # 0-1, how settled Jev is on the score
     specific_news: float  # probability the reason names concrete company news
     model: str
@@ -118,7 +125,7 @@ class Jev:
             thresholds do not move when the ``jev-latest`` alias does.
         min_confidence: Confidence at or above which callers act on an answer.
         min_catalyst_score: Scanner candidates whose catalyst score (0-3) is
-            below this are dropped.
+            below this are dropped; 0 only ranks them.
         timeout: Seconds per attempt.
         transport: Optional ``httpx2`` transport (tests).
     """
@@ -128,7 +135,7 @@ class Jev:
         api_key: str,
         model: str = "jev-1.13.0",
         min_confidence: float = 0.6,
-        min_catalyst_score: float = 1.0,
+        min_catalyst_score: float = 0.0,
         timeout: float = 5.0,
         transport: Any = None,
     ) -> None:

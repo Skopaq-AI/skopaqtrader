@@ -54,6 +54,21 @@ async def test_weak_catalysts_are_dropped_and_the_rest_ranked():
 
 
 @pytest.mark.asyncio
+async def test_threshold_zero_only_ranks():
+    jev = FakeJev({"A": _score(0.2), "B": _score(2.9)}, min_catalyst_score=0.0)
+    kept = await ScannerEngine(jev=jev)._score_catalysts(_candidates("A", "B"))
+    assert _symbols(kept) == ["B", "A"]
+
+
+@pytest.mark.asyncio
+async def test_drops_are_logged_as_a_warning(caplog):
+    jev = FakeJev({"A": _score(0.2), "B": _score(2.9)})
+    with caplog.at_level("WARNING", logger="skopaq.scanner.engine"):
+        await ScannerEngine(jev=jev)._score_catalysts(_candidates("A", "B"))
+    assert "dropped 1 of 2" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_named_company_news_breaks_ties():
     jev = FakeJev({"A": _score(2.0, specific_news=0.1), "B": _score(2.0, specific_news=0.9)})
     kept = await ScannerEngine(jev=jev)._score_catalysts(_candidates("A", "B"))
