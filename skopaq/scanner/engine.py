@@ -7,8 +7,8 @@ Multi-model scanning pipeline:
     4. Optional: Perplexity Sonar for news-driven signals (parallel)
     5. Optional: Grok for social sentiment signals (parallel)
     6. Merge and deduplicate candidates
-    7. Optional: Jev scores each candidate's reason; weak catalysts are
-       dropped and the rest ranked, before they reach the slow full analysis
+    7. Optional: Jev scores each candidate's reason and ranks them (dropping
+       weak ones only above a configured threshold) before the slow analysis
 """
 
 from __future__ import annotations
@@ -294,7 +294,8 @@ class ScannerEngine:
     async def _score_catalysts(
         self, candidates: list[ScannerCandidate],
     ) -> list[ScannerCandidate]:
-        """Score each candidate's reason with Jev; drop weak ones and rank the rest.
+        """Score each candidate's reason with Jev; rank them, dropping any below
+        the threshold (``min_catalyst_score``, 0 by default: rank only).
 
         A candidate Jev could not score is kept and ranked as if it scored
         exactly the threshold, so a Jev outage changes nothing.
@@ -323,6 +324,13 @@ class ScannerEngine:
                 )
                 continue
             kept.append(candidate)
+
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            logger.warning(
+                "Jev dropped %d of %d scanner candidates below catalyst score %.2f "
+                "(SKOPAQ_JEV_MIN_CATALYST_SCORE)", dropped, len(candidates), threshold,
+            )
 
         # Multi-source first (as _deduplicate does), then catalyst strength,
         # then named company news.  sort() is stable, so ties keep their order.

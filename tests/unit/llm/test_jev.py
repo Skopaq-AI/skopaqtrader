@@ -186,4 +186,4 @@ class TestGetJev:
         assert isinstance(jev, Jev)
         assert jev.model == "jev-1.13.0"
         assert jev.min_confidence == 0.7
-        assert jev.min_catalyst_score == 1.0
+        assert jev.min_catalyst_score == 0.0  # rank only by default
