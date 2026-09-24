@@ -9,16 +9,16 @@ Tests real API calls to free, public crypto endpoints (no authentication needed)
 
 import pytest
 
-from tradingagents.dataflows.crypto_onchain import (
+from tradingagents.dataflows.vendors.crypto_onchain import (
     get_blockchain_stats,
     get_address_activity,
 )
-from tradingagents.dataflows.crypto_defi import (
+from tradingagents.dataflows.vendors.crypto_defi import (
     get_token_fundamentals,
     get_defi_tvl,
     get_chain_tvl_overview,
 )
-from tradingagents.dataflows.crypto_funding import (
+from tradingagents.dataflows.vendors.crypto_funding import (
     get_funding_rates,
     get_open_interest,
     get_long_short_ratio,

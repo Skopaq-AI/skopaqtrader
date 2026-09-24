@@ -58,13 +58,14 @@ class TradeRecord(BaseModel):
 class AgentMemoryRecord(BaseModel):
     """Row in the ``agent_memories`` table.
 
-    Stores serialized BM25 memory for a single agent role.
-    documents and recommendations are parallel JSONB arrays.
+    Role ``decision_log`` mirrors upstream's decision log (one entry per
+    ``documents`` element). Legacy per-agent BM25 rows keep ``documents``
+    and ``recommendations`` as parallel JSONB arrays.
     """
 
     id: Optional[UUID] = None
     user_id: Optional[UUID] = None
-    role: str  # 'bull_memory', 'bear_memory', etc.
+    role: str  # 'decision_log'; legacy rows: 'bull_memory', 'bear_memory', etc.
     documents: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     updated_at: Optional[datetime] = None

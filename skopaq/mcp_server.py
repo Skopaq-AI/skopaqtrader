@@ -1112,7 +1112,7 @@ def _setup_dataflow_config():
     is_crypto = config.asset_class == "crypto"
     upstream = {
         "data_vendors": {
-            "core_stock_apis": "yfinance" if is_crypto else "indstocks",
+            "core_stock_apis": "yfinance" if is_crypto else "indstocks,yfinance",
             "technical_indicators": "yfinance",
             "fundamental_data": "yfinance",
             "news_data": "yfinance",
@@ -1136,7 +1136,7 @@ async def gather_market_data(symbol: str, date: str = "") -> str:
     """
     import asyncio
 
-    from tradingagents.dataflows.interface import route_to_vendor
+    from tradingagents.dataflows.router import route_to_vendor
 
     _setup_dataflow_config()
 
@@ -1192,7 +1192,7 @@ async def gather_news_data(symbol: str, date: str = "") -> str:
     """
     import asyncio
 
-    from tradingagents.dataflows.interface import route_to_vendor
+    from tradingagents.dataflows.router import route_to_vendor
 
     _setup_dataflow_config()
 
@@ -1244,7 +1244,7 @@ async def gather_fundamentals_data(symbol: str, date: str = "") -> str:
     """
     import asyncio
 
-    from tradingagents.dataflows.interface import route_to_vendor
+    from tradingagents.dataflows.router import route_to_vendor
 
     _setup_dataflow_config()
 
@@ -1283,7 +1283,7 @@ async def gather_social_data(symbol: str, date: str = "") -> str:
     """
     import asyncio
 
-    from tradingagents.dataflows.interface import route_to_vendor
+    from tradingagents.dataflows.router import route_to_vendor
 
     _setup_dataflow_config()
 
@@ -1309,11 +1309,11 @@ async def gather_social_data(symbol: str, date: str = "") -> str:
 
 @mcp.tool()
 async def recall_agent_memories(situation_summary: str) -> str:
-    """Retrieve past lessons from agent memories using BM25 similarity search.
+    """Retrieve past lessons from agent memory using BM25 similarity search.
 
-    Returns matched recommendations for all 5 memory roles (bull, bear,
-    trader, invest_judge, risk_manager). These are injected into each
-    agent perspective during analysis to learn from past trades.
+    Searches the decision log (each past decision and, once settled, its
+    outcome and reflection) plus the per-agent lessons (bull, bear, trader,
+    invest_judge, risk_manager) recorded before the upstream v0.5.1 sync.
 
     Args:
         situation_summary: Description of current market situation
@@ -1325,8 +1325,7 @@ async def recall_agent_memories(situation_summary: str) -> str:
         return json.dumps({"memories": {}, "note": "Supabase not configured"})
 
     try:
-        from tradingagents.agents.utils.memory import FinancialSituationMemory
-        from skopaq.memory.store import MemoryStore, MEMORY_ROLES
+        from skopaq.memory.store import MemoryStore
         from supabase import create_client
 
         client = create_client(
@@ -1334,31 +1333,11 @@ async def recall_agent_memories(situation_summary: str) -> str:
             config.supabase_service_key.get_secret_value(),
         )
         store = MemoryStore(client, max_entries=config.reflection_max_memory_entries)
-
-        # Create temporary memory objects and load from Supabase
-        class _MemHolder:
-            pass
-
-        holder = _MemHolder()
-        for role in MEMORY_ROLES:
-            setattr(holder, role, FinancialSituationMemory(name=role))
-
-        loaded = store.load(holder)
-
-        # Query each memory role
-        memories = {}
-        for role in MEMORY_ROLES:
-            mem = getattr(holder, role)
-            matches = mem.get_memories(situation_summary, n_matches=2)
-            if matches:
-                memories[role] = [
-                    {"recommendation": m.get("recommendation", ""), "score": m.get("score", 0)}
-                    for m in matches
-                ]
+        memories = store.recall(situation_summary, n_matches=2)
 
         return json.dumps({
             "memories": memories,
-            "total_loaded": loaded,
+            "total_loaded": sum(len(v) for v in memories.values()),
         })
 
     except Exception as e:
@@ -1510,7 +1489,7 @@ async def backtest_strategy(
     import asyncio
 
     try:
-        from tradingagents.dataflows.interface import route_to_vendor
+        from tradingagents.dataflows.router import route_to_vendor
         from skopaq.backtest.engine import BacktestConfig, run_backtest, format_backtest_report
 
         _setup_dataflow_config()
@@ -1584,7 +1563,7 @@ async def run_monte_carlo_test(
     try:
         # First run backtest to get trades
         import asyncio, io
-        from tradingagents.dataflows.interface import route_to_vendor
+        from tradingagents.dataflows.router import route_to_vendor
         from skopaq.backtest.engine import BacktestConfig, run_backtest
         from skopaq.backtest.monte_carlo import run_monte_carlo, format_monte_carlo_report
 

@@ -11,7 +11,8 @@ The upstream TradingAgentsGraph uses a single provider with two LLMs
     bull_researcher     → Gemini 3 Flash
     bear_researcher     → Gemini 3 Flash
     research_manager    → Claude Opus 4.6  (strongest reasoning — judge role)
-    risk_manager        → Claude Opus 4.6  (strongest reasoning — judge role)
+    portfolio_manager   → Claude Opus 4.6  (strongest reasoning — judge role;
+                                            upstream renamed risk_manager in v0.2.2)
     trader              → Gemini 3 Flash
     aggressive_debator  → Gemini 3 Flash
     neutral_debator     → Gemini 3 Flash
@@ -51,7 +52,7 @@ _ROLE_PREFERENCES: dict[str, list[tuple[str, str]]] = {
     "bear_researcher":      [("google", "gemini-3-flash-preview"), ("ollama", "auto")],
     # Judge roles: NO local fallback — reasoning quality is critical
     "research_manager":     [("anthropic", "claude-opus-4-6"), ("google", "gemini-3-flash-preview")],
-    "risk_manager":         [("anthropic", "claude-opus-4-6"), ("google", "gemini-3-flash-preview")],
+    "portfolio_manager":    [("anthropic", "claude-opus-4-6"), ("google", "gemini-3-flash-preview")],
     "trader":               [("google", "gemini-3-flash-preview"), ("ollama", "auto")],
     "aggressive_debator":   [("google", "gemini-3-flash-preview"), ("ollama", "auto")],
     "neutral_debator":      [("google", "gemini-3-flash-preview"), ("ollama", "auto")],

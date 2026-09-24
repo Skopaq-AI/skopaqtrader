@@ -4,8 +4,9 @@ When a SELL trade closes a position, this manager:
 1. Finds the original BUY trade via ``TradeRepository.find_open_buy()``
 2. Computes realized P&L = (sell_price - buy_price) * quantity
 3. Marks the BUY trade as closed (``closed_at`` + ``opening_trade_id`` on SELL)
-4. Triggers upstream reflection with the P&L outcome
-5. Persists updated agent memories via ``MemoryStore.save()``
+4. Asks the graph to settle that symbol's pending decisions in upstream's
+   decision log (with a reflection on each settled one)
+5. Persists the decision log via ``MemoryStore.save()``
 
 This is the mechanism that provides memory-augmented learning:
 each closed position generates lessons that inform future decisions.
@@ -168,7 +169,7 @@ class TradeLifecycleManager:
         # Trigger reflection with P&L outcome
         returns_losses = _format_returns(symbol, pnl, pnl_pct, buy_price, sell_price)
         try:
-            self._graph.reflect(returns_losses)
+            self._graph.reflect(returns_losses, symbol=symbol)
             logger.info("Reflection triggered for %s (P&L=%.2f)", symbol, pnl)
         except Exception:
             logger.warning(
@@ -184,12 +185,7 @@ def _format_returns(
     buy_price: Optional[Decimal],
     sell_price: Any,
 ) -> str:
-    """Format P&L data into a string for the upstream Reflector.
-
-    The upstream ``reflect_and_remember(returns_losses)`` passes this
-    string directly to the LLM reflection prompt, so it should be
-    human-readable and information-rich.
-    """
+    """Format P&L data into a human-readable summary for ``graph.reflect()``."""
     return (
         f"Symbol: {symbol}\n"
         f"Entry Price: {buy_price}\n"

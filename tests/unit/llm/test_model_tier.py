@@ -50,7 +50,7 @@ class TestBuildLlmMap:
         assert llm_map["social_analyst"]._provider == "openrouter"
         assert llm_map["news_analyst"]._provider == "google"
         assert llm_map["research_manager"]._provider == "anthropic"
-        assert llm_map["risk_manager"]._provider == "anthropic"
+        assert llm_map["portfolio_manager"]._provider == "anthropic"
         assert llm_map["market_analyst"]._provider == "google"
         assert "_default" in llm_map
 
@@ -74,7 +74,7 @@ class TestBuildLlmMap:
 
         # Everything should be Gemini
         for role in ["market_analyst", "social_analyst", "news_analyst",
-                      "research_manager", "risk_manager"]:
+                      "research_manager", "portfolio_manager"]:
             assert llm_map[role]._provider == "google"
 
     @patch("skopaq.llm.model_tier._create_llm")

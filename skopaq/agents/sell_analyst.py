@@ -36,7 +36,7 @@ from skopaq.llm import extract_text
 logger = logging.getLogger(__name__)
 
 # Re-use upstream tool definitions — they handle vendor routing automatically
-from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators
+from tradingagents.agents.tools import get_indicators, get_stock_data
 
 
 @dataclass

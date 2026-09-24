@@ -4,7 +4,8 @@ This is the main entry point for running an analysis-and-trade cycle.
 It calls the upstream ``propagate()`` as a black box, then routes the
 decision through safety checks and order execution.
 
-Zero modifications to upstream ``tradingagents/`` code.
+Upstream changes this relies on (llm_map, confidence) are listed in
+UPSTREAM_CHANGES.md.
 """
 
 from __future__ import annotations
@@ -47,8 +48,9 @@ class SkopaqTradingGraph:
 
         propagate(symbol, date)  →  parse signal  →  executor.execute_signal()
 
-    When a ``MemoryStore`` is provided, memories are loaded from Supabase
-    before the first ``propagate()`` call, and saved back after reflection.
+    When a ``MemoryStore`` is provided, upstream's decision log is loaded
+    from Supabase before the first ``propagate()`` call, and saved back
+    after every analysis and reflection.
 
     Args:
         upstream_config: Config dict for TradingAgentsGraph (LLM keys, etc).
@@ -92,27 +94,61 @@ class SkopaqTradingGraph:
         bridge_env_vars()
 
         # Import upstream at runtime to avoid import-time side effects
+        from tradingagents.default_config import DEFAULT_CONFIG
         from tradingagents.graph import TradingAgentsGraph
+
+        # Upstream reads its required keys (results_dir, data_cache_dir, ...)
+        # straight from config, so fill whatever the caller left out.
+        config = {**DEFAULT_CONFIG, **self._upstream_config}
+        llm_map = config.pop("llm_map", None)
 
         self._graph = TradingAgentsGraph(
             selected_analysts=self._selected_analysts,
             debug=self._debug,
-            config=self._upstream_config,
+            config=config,
+            llm_map=llm_map,
         )
         logger.info(
             "Upstream TradingAgentsGraph initialised (analysts=%s, debug=%s)",
             self._selected_analysts, self._debug,
         )
 
-        # Restore persisted memories into the upstream graph's memory objects
+        # Restore the persisted decision log before the first run reads it
         if self._memory_store is not None:
             try:
                 loaded = self._memory_store.load(self._graph)
-                logger.info("Agent memories loaded from Supabase (%d entries)", loaded)
+                logger.info("Decision log loaded from Supabase (%d entries)", loaded)
             except Exception:
                 logger.warning("Memory load failed — agents will start with empty memory", exc_info=True)
 
         return self._graph
+
+    def _upstream_symbol(self, symbol: str) -> str:
+        """The ticker as upstream expects it: exchange-qualified for NSE equities.
+
+        Upstream resolves the company, benchmarks returns (``.NS`` → Nifty 50)
+        and settles past decisions from Yahoo data, which needs ``RELIANCE.NS``
+        rather than ``RELIANCE``. The INDstocks vendor strips the suffix again.
+        """
+        if self._upstream_config.get("asset_class") == "crypto":
+            return symbol
+        suffix = self._upstream_config.get("yfinance_symbol_suffix", "")
+        if suffix and not symbol.upper().endswith(suffix.upper()):
+            return symbol + suffix
+        return symbol
+
+    def _asset_type(self) -> str:
+        return "crypto" if self._upstream_config.get("asset_class") == "crypto" else "stock"
+
+    def _save_memory(self) -> None:
+        """Persist the decision log to Supabase (no-op without a memory store)."""
+        if self._memory_store is None or self._graph is None:
+            return
+        try:
+            saved = self._memory_store.save(self._graph)
+            logger.info("Decision log saved to Supabase (%d entries)", saved)
+        except Exception:
+            logger.warning("Memory save failed — decision log not persisted", exc_info=True)
 
     async def analyze(self, symbol: str, trade_date: str) -> AnalysisResult:
         """Run upstream analysis without executing a trade.
@@ -124,7 +160,11 @@ class SkopaqTradingGraph:
         start = time.monotonic()
         try:
             graph = self._ensure_graph()
-            state, decision = graph.propagate(symbol, trade_date)
+            state, decision = graph.propagate(
+                self._upstream_symbol(symbol), trade_date, asset_type=self._asset_type(),
+            )
+            # propagate() appended this decision to the log; keep it
+            self._save_memory()
 
             signal = self._parse_signal(symbol, decision, state)
             duration = time.monotonic() - start
@@ -197,25 +237,23 @@ class SkopaqTradingGraph:
         )
         return result
 
-    def reflect(self, returns_losses: Any) -> None:
-        """Invoke upstream reflection to update agent memories.
+    def reflect(self, returns_losses: Any, symbol: Optional[str] = None) -> None:
+        """Settle past decisions for *symbol* in upstream's decision log.
 
-        Called after a position close (SELL) to let agents learn from the
-        realized P&L.  After the LLM-powered reflection writes lessons into
-        the in-memory BM25 stores, we persist them to Supabase so they
-        survive across sessions.
+        Called after a position close (SELL). Upstream (v0.2.4+) no longer
+        keeps per-agent memories: each decision is logged as it is made and
+        settled once its holding window has traded, with a reflection the
+        Portfolio Manager reads on later runs. The realized-P&L lesson itself
+        is recorded by ``skopaq.memory.reflection``; ``returns_losses`` is
+        only logged here.
         """
+        if not symbol:
+            logger.info("Reflection skipped — no symbol to settle (%s)", returns_losses)
+            return
         graph = self._ensure_graph()
-        graph.reflect_and_remember(returns_losses)
-        logger.info("Upstream reflection complete")
-
-        # Persist updated memories to Supabase
-        if self._memory_store is not None:
-            try:
-                saved = self._memory_store.save(self._graph)
-                logger.info("Agent memories saved to Supabase (%d entries)", saved)
-            except Exception:
-                logger.warning("Memory save failed — lessons will be lost on exit", exc_info=True)
+        graph.settle_pending(self._upstream_symbol(symbol))
+        logger.info("Settled pending decisions for %s", symbol)
+        self._save_memory()
 
     # ── Cache stats ────────────────────────────────────────────────────
 
@@ -250,8 +288,9 @@ class SkopaqTradingGraph:
         """Convert upstream decision into a typed TradingSignal.
 
         The upstream ``propagate()`` returns a (state, decision) tuple where
-        ``decision`` is a processed signal string like "BUY" / "SELL" / "HOLD",
-        and ``state`` is a dict with all intermediate analysis.
+        ``decision`` is upstream's 5-tier rating (Buy / Overweight / Hold /
+        Underweight / Sell) or ``REVIEW`` when the decision had no readable
+        rating, and ``state`` is a dict with all intermediate analysis.
 
         Reasoning is extracted from (in priority order):
         1. ``risk_debate_state.judge_decision`` — the risk manager's verdict
@@ -262,14 +301,9 @@ class SkopaqTradingGraph:
             return None
 
         decision_str = str(decision).strip().upper()
-
-        # Extract action
-        if "BUY" in decision_str:
-            action = "BUY"
-        elif "SELL" in decision_str:
-            action = "SELL"
-        else:
-            action = "HOLD"
+        action = _rating_to_action(decision_str)
+        if decision_str == "REVIEW":
+            logger.warning("No readable rating in the decision for %s — treating as HOLD", symbol)
 
         # Try to extract confidence from state
         confidence = 50
@@ -306,11 +340,29 @@ class SkopaqTradingGraph:
         )
 
 
+# Upstream's 5-tier rating → Skopaq's order action. Overweight/Underweight
+# carry the same direction as Buy/Sell (upstream: "gradually increase" /
+# "reduce exposure"); confidence scales the position size. REVIEW means the
+# decision had no readable rating, which must never become a trade.
+_RATING_ACTIONS = {
+    "BUY": "BUY",
+    "OVERWEIGHT": "BUY",
+    "HOLD": "HOLD",
+    "UNDERWEIGHT": "SELL",
+    "SELL": "SELL",
+}
+
+
+def _rating_to_action(decision: str) -> str:
+    """Map an upstream rating (any case) to BUY / SELL / HOLD."""
+    return _RATING_ACTIONS.get(decision.strip().upper(), "HOLD")
+
+
 def _extract_confidence(risk_state: dict[str, Any]) -> int:
     """Extract a confidence score from the risk debate state.
 
     Extraction priority:
-    1. Parse ``CONFIDENCE: <N>`` from the judge_decision text.
+    1. Parse ``CONFIDENCE: <N>`` / ``**Confidence**: <N>`` from the judge_decision text.
     2. Check for explicit dict keys (forward-compatible).
     3. Heuristic: analyse debater agreement direction.
     4. Fallback: 50 (graceful degradation).
@@ -322,7 +374,8 @@ def _extract_confidence(risk_state: dict[str, Any]) -> int:
         from skopaq.llm import extract_text
         judge_text = extract_text(judge_text)
 
-        match = re.search(r"(?i)confidence\s*:\s*(\d{1,3})", judge_text)
+        # Tolerates the markdown bold of "**Confidence**: 72" (upstream render).
+        match = re.search(r"(?i)confidence\**\s*:\s*\**\s*(\d{1,3})", judge_text)
         if match:
             val = int(match.group(1))
             clamped = max(0, min(100, val))

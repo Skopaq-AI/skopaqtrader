@@ -58,7 +58,7 @@ class TestINDstocksQuote:
     def test_fetch_reliance_quote(self):
         """Fetch real-time quote for RELIANCE."""
         _skip_if_no_token()
-        from tradingagents.dataflows.indstocks import get_quote_indstocks
+        from tradingagents.dataflows.vendors.indstocks import get_quote_indstocks
 
         result = get_quote_indstocks("RELIANCE")
         print(f"\n  Quote result:\n{result[:500]}")
@@ -72,7 +72,7 @@ class TestINDstocksHistorical:
     def test_fetch_reliance_historical(self):
         """Fetch 5-day OHLCV for RELIANCE."""
         _skip_if_no_token()
-        from tradingagents.dataflows.indstocks import get_stock_data_indstocks
+        from tradingagents.dataflows.vendors.indstocks import get_stock_data_indstocks
 
         # Use recent dates (API max 1yr for daily candles)
         result = get_stock_data_indstocks("RELIANCE", "2026-02-24", "2026-02-28")
@@ -87,7 +87,7 @@ class TestINDstocksVendorFallback:
 
     def test_route_to_vendor_uses_indstocks_first(self):
         """route_to_vendor should try INDstocks before yfinance."""
-        from tradingagents.dataflows.interface import VENDOR_LIST, VENDOR_METHODS
+        from tradingagents.dataflows.router import VENDOR_LIST, VENDOR_METHODS
 
         assert VENDOR_LIST[0] == "indstocks"
         assert "indstocks" in VENDOR_METHODS["get_stock_data"]

@@ -17,9 +17,11 @@ class TestBridgeEnvVars:
         auto-attribute creation doesn't leak non-string values into
         os.environ.
         """
+        from skopaq.llm.env_bridge import _BRIDGE_MAP
+
         config = MagicMock()
         # Set all bridge-mapped keys to empty by default
-        for key in ("google_api_key", "anthropic_api_key", "xai_api_key", "perplexity_api_key", "openrouter_api_key"):
+        for key in _BRIDGE_MAP:
             setattr(config, key, SecretStr(""))
         # Override with caller-supplied values
         for key, value in kwargs.items():
@@ -78,3 +80,14 @@ class TestBridgeEnvVars:
                 os.environ.pop(var, None)
             bridged = bridge_env_vars(config)
             assert set(bridged) == {"GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"}
+
+
+def test_bridges_typesafe_key():
+    """SKOPAQ_TYPESAFE_API_KEY → TYPESAFE_API_KEY (upstream's Jev post screening)."""
+    from skopaq.llm.env_bridge import bridge_env_vars
+
+    config = TestBridgeEnvVars()._make_config(typesafe_api_key="ts-key")
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        assert "TYPESAFE_API_KEY" in bridge_env_vars(config)
+        assert os.environ["TYPESAFE_API_KEY"] == "ts-key"

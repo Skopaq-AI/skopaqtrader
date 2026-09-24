@@ -137,7 +137,7 @@ class TestOllamaInRolePreferences:
     def test_judge_roles_skip_ollama(self):
         from skopaq.llm.model_tier import _ROLE_PREFERENCES
 
-        # Judge roles (research_manager, risk_manager) need cloud quality
-        for role in ("research_manager", "risk_manager"):
+        # Judge roles (research_manager, portfolio_manager) need cloud quality
+        for role in ("research_manager", "portfolio_manager"):
             providers = [p for p, _ in _ROLE_PREFERENCES[role]]
             assert "ollama" not in providers, f"{role} should not have Ollama fallback"

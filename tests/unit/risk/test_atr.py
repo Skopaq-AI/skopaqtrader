@@ -82,20 +82,20 @@ class TestFetchATR:
 
     def test_vendor_failure_returns_none(self):
         """When upstream vendor is unavailable, return None."""
-        with patch.dict("sys.modules", {"tradingagents.dataflows.interface": None}):
+        with patch.dict("sys.modules", {"tradingagents.dataflows.router": None}):
             result = fetch_atr("RELIANCE", "2026-03-01")
         assert result is None
 
     def test_vendor_returns_empty(self):
         mock_module = MagicMock()
         mock_module.route_to_vendor.return_value = ""
-        with patch.dict("sys.modules", {"tradingagents.dataflows.interface": mock_module}):
+        with patch.dict("sys.modules", {"tradingagents.dataflows.router": mock_module}):
             result = fetch_atr("RELIANCE", "2026-03-01")
         assert result is None
 
     def test_vendor_returns_valid_data(self):
         mock_module = MagicMock()
         mock_module.route_to_vendor.return_value = "ATR = 55.0"
-        with patch.dict("sys.modules", {"tradingagents.dataflows.interface": mock_module}):
+        with patch.dict("sys.modules", {"tradingagents.dataflows.router": mock_module}):
             result = fetch_atr("RELIANCE", "2026-03-01")
         assert result == 55.0
