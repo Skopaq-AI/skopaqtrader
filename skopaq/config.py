@@ -40,6 +40,8 @@ class SkopaqConfig(BaseSettings):
     # ── Trading Mode ────────────────────────────────────────────────────
     trading_mode: Literal["paper", "live"] = "paper"
     initial_paper_capital: float = 1_000_000.0  # INR
+    # Kill switch set at deploy level; also `skopaq halt` (skopaq/execution/kill_switch.py)
+    trading_halted: bool = False
 
     # ── LLM API Keys ───────────────────────────────────────────────────
     google_api_key: SecretStr = SecretStr("")  # Gemini Flash (scanner)

@@ -31,7 +31,7 @@ The daemon (`skopaq/execution/daemon.py`) is a finite state machine that compose
 
 ## MCP Server (Claude Code Integration)
 
-SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 37 trading tools directly inside Claude Code (the core ones are listed below). Configured in `.claude/.mcp.json`.
+SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 39 trading tools directly inside Claude Code (the core ones are listed below). Configured in `.claude/.mcp.json`.
 
 **IMPORTANT**: When fetching market data, quotes, or portfolio info — always use the MCP tools (`mcp__skopaq__*`). Do NOT write Python/Bash code to call `INDstocksClient` or other broker modules directly. The MCP tools handle authentication, scrip resolution, and error handling internally.
 
@@ -50,6 +50,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 37 
 | `quick_decision` | Jev's calibrated answer to a question about a text (~0.1 s) |
 | `check_safety` | Pre-trade safety validation |
 | `place_order` | Execute order (paper/live, safety-checked) |
+| `halt_trading` / `resume_trading` | Kill switch: stop / allow new BUYs everywhere |
 | `system_status` | Health check (version, mode, LLMs) |
 
 **Custom slash commands**: `/quote RELIANCE`, `/analyze TCS`, `/scan`, `/portfolio`, `/trade INFY`
@@ -76,6 +77,8 @@ skopaq daemon --once --paper  # Full autonomous session
 skopaq monitor             # Monitor existing positions
 skopaq settle              # Settle past decisions whose holding window has traded
 skopaq memory legacy       # Show pre-v0.5.1 agent memories (--export FILE, --delete)
+skopaq halt "reason"       # Kill switch: reject every BUY everywhere
+skopaq resume              # Lift the kill switch
 skopaq serve               # FastAPI server
 ```
 
@@ -143,7 +146,7 @@ skopaq/
 
 ## Key Conventions
 
-1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order.
+1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order. Its daily/weekly/monthly loss limits are seeded from P&L stored in Supabase (`skopaq/execution/pnl_history.py`), so they hold across processes; the kill switch (`skopaq/execution/kill_switch.py`: `skopaq halt`, `SKOPAQ_TRADING_HALTED`, or the `system_flags` row) rejects every BUY while on.
 2. **Paper mode is default** — All CLI commands default to paper trading. Live mode requires explicit `--live` or `SKOPAQ_TRADING_MODE=live` + confirmation prompt.
 3. **Upstream modifications are minimal** — Changes to `tradingagents/` must be documented in `UPSTREAM_CHANGES.md` with backward-compatibility notes.
 4. **No secrets in code** — All credentials come from environment variables. Never commit `.env`, token files, or API keys.
