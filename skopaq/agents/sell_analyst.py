@@ -2,7 +2,9 @@
 
 This is a lightweight, single-agent LLM call (NOT the full multi-agent graph).
 It uses Gemini 3 Flash to analyze technicals and price action, then recommends
-SELL or HOLD with confidence and reasoning.
+SELL or HOLD with confidence and reasoning. With TypeSafe Jev enabled
+(``skopaq.llm.jev``), Jev reads the analysis and makes the SELL/HOLD call
+with a calibrated confidence; a SELL it is not confident in becomes HOLD.
 
 Usage::
 
@@ -100,6 +102,7 @@ async def analyze_exit(
     trade_date: str,
     min_profit_threshold_pct: float = 0.0,
     estimated_round_trip_brokerage: float = 0.0,
+    jev=None,
 ) -> SellDecision:
     """Run a single-shot LLM analysis to decide whether to exit a position.
 
@@ -117,6 +120,7 @@ async def analyze_exit(
         trade_date: Current date in YYYY-MM-DD format.
         min_profit_threshold_pct: Minimum P&L% for profit-taking sells.
         estimated_round_trip_brokerage: Estimated total brokerage for buy+sell.
+        jev: Optional ``skopaq.llm.jev.Jev``; defaults to ``get_jev()``.
 
     Returns:
         SellDecision with action, confidence, and reasoning.
@@ -126,6 +130,7 @@ async def analyze_exit(
             llm, symbol, entry_price, current_price,
             quantity, position_pnl_pct, trade_date,
             min_profit_threshold_pct, estimated_round_trip_brokerage,
+            jev=jev,
         )
     except Exception:
         logger.warning(
@@ -148,6 +153,7 @@ async def _invoke_sell_analyst(
     trade_date: str,
     min_profit_threshold_pct: float = 0.0,
     estimated_round_trip_brokerage: float = 0.0,
+    jev=None,
 ) -> SellDecision:
     """Internal: invoke the LLM chain and parse the structured response."""
     tools = [get_stock_data, get_indicators]
@@ -220,7 +226,37 @@ async def _invoke_sell_analyst(
 
     # Parse the final text response
     content = extract_text(result.content) if result.content else ""
-    return _parse_decision(content)
+    return await _decide_with_jev(_parse_decision(content), content, jev)
+
+
+async def _decide_with_jev(decision: SellDecision, analysis: str, jev=None) -> SellDecision:
+    """Let Jev make the SELL/HOLD call on the analysis, when it is enabled.
+
+    Jev's choice stands only at or above its ``min_confidence``; anything
+    less is HOLD (the safety tier still handles hard stops). The confidence
+    is Jev's probability for the action taken. Without Jev, or if the call
+    fails, the parsed LLM decision stands.
+    """
+    from skopaq.llm.jev import get_jev
+
+    jev = jev if jev is not None else get_jev()
+    if jev is None:
+        return decision
+    verdict = await jev.exit_action(analysis)
+    if verdict is None:
+        return decision
+
+    action = verdict.choice if verdict.confidence >= jev.min_confidence else "HOLD"
+    if action != decision.action:
+        logger.info(
+            "Jev overrides the sell analyst's %s with %s (%s)",
+            decision.action, action, verdict.describe(),
+        )
+    return SellDecision(
+        action=action,  # type: ignore[arg-type]
+        confidence=round(100 * verdict.probability(action)),
+        reasoning=f"[{verdict.describe()}] {decision.reasoning}"[:500],
+    )
 
 
 def _parse_decision(text: str) -> SellDecision:
