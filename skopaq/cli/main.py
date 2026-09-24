@@ -536,6 +536,22 @@ async def _run_scan(max_candidates: int):
 # ── Monitor ─────────────────────────────────────────────────────────────────
 
 
+@app.command("settle")
+def settle() -> None:
+    """Settle past decisions whose holding window has traded, for every ticker."""
+    from skopaq.config import SkopaqConfig
+    from skopaq.graph.skopaq_graph import SkopaqTradingGraph
+
+    config = SkopaqConfig()
+    graph = SkopaqTradingGraph(
+        _build_upstream_config(config),
+        executor=None,
+        memory_store=_create_memory_store(config),
+    )
+    settled = graph.settle_due()
+    display_success(f"Settled {settled} past decision(s).")
+
+
 @app.command("monitor")
 def monitor(
     poll_interval: int = typer.Option(0, help="Poll interval in seconds (0 = use config)."),

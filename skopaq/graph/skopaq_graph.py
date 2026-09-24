@@ -318,6 +318,27 @@ class SkopaqTradingGraph:
         logger.info("Settled pending decisions for %s", symbol)
         self._save_memory()
 
+    def settle_due(self) -> int:
+        """Settle every ticker's pending decisions whose holding window has traded.
+
+        Upstream settles a ticker only when that ticker is analyzed again, so
+        decisions on tickers the scanner never picks again would stay pending
+        forever. Returns how many decisions were settled.
+        """
+        graph = self._ensure_graph()
+        before = {(e["date"], e["ticker"]) for e in graph.memory_log.get_pending_entries()}
+        for ticker in sorted({ticker for _, ticker in before}):
+            try:
+                graph.settle_pending(ticker)
+            except Exception:
+                logger.warning("Settling %s failed", ticker, exc_info=True)
+        after = {(e["date"], e["ticker"]) for e in graph.memory_log.get_pending_entries()}
+        settled = len(before - after)
+        logger.info("Settled %d of %d pending decisions", settled, len(before))
+        if settled:
+            self._save_memory()
+        return settled
+
     @staticmethod
     def _settle_realized(
         graph: Any,

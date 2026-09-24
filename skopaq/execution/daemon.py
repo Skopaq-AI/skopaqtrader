@@ -68,6 +68,7 @@ class DaemonSessionReport:
     sells_executed: int = 0
     sells_failed: int = 0
     gross_pnl: float = 0.0
+    decisions_settled: int = 0
     errors: list[str] = field(default_factory=list)
     monitor_result: Optional[MonitorResult] = None
 
@@ -232,6 +233,7 @@ class TradingDaemon:
             # Phase 7: REPORTING — compile metrics
             self._phase = DaemonPhase.REPORTING
             report.phase_times = dict(self._phase_times)
+            report.decisions_settled = await self._settle_due_decisions()
 
             # Clean up client session
             if self._client is not None:
@@ -513,6 +515,16 @@ class TradingDaemon:
         logger.info("Starting position monitor...")
         return await monitor.run()
 
+    async def _settle_due_decisions(self) -> int:
+        """Settle past decisions whose holding window has traded (all tickers)."""
+        if self._graph is None or self._stop.is_set():
+            return 0
+        try:
+            return await asyncio.to_thread(self._graph.settle_due)
+        except Exception:
+            logger.warning("Settling past decisions failed", exc_info=True)
+            return 0
+
     async def _phase_close(self) -> None:
         """Safety net — force-sell any remaining positions.
 
@@ -596,6 +608,7 @@ class TradingDaemon:
         logger.info("Sells executed:      %d", report.sells_executed)
         logger.info("Sells failed:        %d", report.sells_failed)
         logger.info("Gross P&L:           %.2f", report.gross_pnl)
+        logger.info("Decisions settled:   %d", report.decisions_settled)
 
         if report.phase_times:
             times = "  ".join(
