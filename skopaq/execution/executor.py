@@ -104,6 +104,7 @@ class Executor:
 
         # Step 2: Safety checks
         positions = await self._router.get_positions()
+        holdings = await self._holdings_for(order)
         funds = await self._router.get_funds()
         portfolio_value = funds.total_collateral or funds.available_cash
 
@@ -113,6 +114,7 @@ class Executor:
             positions=positions,
             funds=funds,
             portfolio_value=portfolio_value,
+            holdings=holdings,
         )
 
         if not safety_result.passed:
@@ -275,6 +277,17 @@ class Executor:
             product=Product.CNC,
             tag=f"skopaq-{signal.confidence}",
         )
+
+    async def _holdings_for(self, order: OrderRequest) -> list:
+        """Delivery holdings, fetched only for SELLs (the no-short-sale check)."""
+        if order.side != Side.SELL:
+            return []
+        try:
+            return await self._router.get_holdings()
+        except Exception:
+            logger.warning("Could not fetch holdings — SELL checked against positions only",
+                           exc_info=True)
+            return []
 
     def _cap_quantity(self, raw_qty: int, price: float, equity: float) -> int:
         """Cap raw ATR-computed quantity to respect safety limits.
