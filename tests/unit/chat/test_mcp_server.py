@@ -14,7 +14,7 @@ def test_mcp_server_has_all_tools():
     from skopaq.mcp_server import mcp
 
     tool_names = {t.name for t in mcp._tool_manager._tools.values()}
-    assert len(tool_names) == 39  # Total tool count
+    assert len(tool_names) == 40  # Total tool count
 
     # Verify key tools exist by category
     assert "get_quote" in tool_names  # Market data
@@ -36,6 +36,7 @@ def test_mcp_server_has_all_tools():
     assert "recall_agent_memories" in tool_names  # Memory
     assert "quick_decision" in tool_names  # Jev
     assert {"halt_trading", "resume_trading"} <= tool_names  # Kill switch
+    assert "performance_report" in tool_names  # Track record
     assert "system_status" in tool_names  # System
 
 

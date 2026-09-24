@@ -17,6 +17,7 @@
       "mcp__skopaq__recall_agent_memories",
       "mcp__skopaq__quick_decision",
       "mcp__skopaq__halt_trading",
+      "mcp__skopaq__performance_report",
       "Bash(python3 -m pytest tests/unit/ -x -q)",
       "Bash(python3 -m pytest tests/unit/ -x -v)",
       "Bash(skopaq status)",

@@ -507,6 +507,35 @@ async def system_status() -> str:
 
 
 @mcp.tool()
+async def performance_report(days: int = 90) -> str:
+    """Track record: AI calls vs NIFTY, closed trades, confidence calibration.
+
+    Forward results from the decision log and the trades table, in the
+    current trading mode. Below 30 settled calls the hit rate is mostly noise
+    (``enough_data`` is false).
+
+    Args:
+        days: How many days back to include (default 90).
+    """
+    from dataclasses import asdict
+
+    from skopaq.learning.report import build_report
+
+    report = build_report(_get_config(), days=days)
+    return json.dumps({
+        "days": report.days,
+        "mode": report.mode,
+        "calls": {**asdict(report.calls), "enough_data": report.calls.enough_data},
+        "trades": {**asdict(report.trades), "win_rate": report.trades.win_rate},
+        "calibration": [
+            {"confidence": b.label, "trades": b.trades, "win_rate": b.win_rate}
+            for b in report.calibration
+        ],
+        "sources": report.sources,
+    })
+
+
+@mcp.tool()
 async def halt_trading(reason: str = "halted from Claude Code") -> str:
     """Kill switch: reject every BUY everywhere until resume_trading.
 

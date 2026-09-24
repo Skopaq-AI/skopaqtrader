@@ -31,7 +31,7 @@ The daemon (`skopaq/execution/daemon.py`) is a finite state machine that compose
 
 ## MCP Server (Claude Code Integration)
 
-SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 39 trading tools directly inside Claude Code (the core ones are listed below). Configured in `.claude/.mcp.json`.
+SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 40 trading tools directly inside Claude Code (the core ones are listed below). Configured in `.claude/.mcp.json`.
 
 **IMPORTANT**: When fetching market data, quotes, or portfolio info — always use the MCP tools (`mcp__skopaq__*`). Do NOT write Python/Bash code to call `INDstocksClient` or other broker modules directly. The MCP tools handle authentication, scrip resolution, and error handling internally.
 
@@ -51,6 +51,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 39 
 | `check_safety` | Pre-trade safety validation |
 | `place_order` | Execute order (paper/live, safety-checked) |
 | `halt_trading` / `resume_trading` | Kill switch: stop / allow new BUYs everywhere |
+| `performance_report` | Track record: AI calls vs NIFTY, closed trades, calibration |
 | `system_status` | Health check (version, mode, LLMs) |
 
 **Custom slash commands**: `/quote RELIANCE`, `/analyze TCS`, `/scan`, `/portfolio`, `/trade INFY`
@@ -81,6 +82,7 @@ skopaq daemon --once --paper  # Full autonomous session
 skopaq monitor             # Monitor existing positions
 skopaq settle              # Settle past decisions whose holding window has traded
 skopaq memory legacy       # Show pre-v0.5.1 agent memories (--export FILE, --delete)
+skopaq report              # Track record: AI calls vs NIFTY, closed trades, calibration
 skopaq halt "reason"       # Kill switch: reject every BUY everywhere
 skopaq resume              # Lift the kill switch
 skopaq serve               # FastAPI server

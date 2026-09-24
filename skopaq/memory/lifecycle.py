@@ -15,7 +15,7 @@ each closed position generates lessons that inform future decisions.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -168,6 +168,8 @@ class TradeLifecycleManager:
         else:
             logger.debug("No trade_id on result — SELL/BUY linkage skipped")
 
+        _record_outcome(open_buy, result, buy_price, sell_price, pnl, pnl_pct, now)
+
         if self._graph is None:
             return  # recording only (reflection off, or no graph built)
 
@@ -186,6 +188,38 @@ class TradeLifecycleManager:
                 "Reflection failed for %s — memories not updated",
                 symbol, exc_info=True,
             )
+
+
+def _record_outcome(open_buy, result, buy_price, sell_price, pnl, pnl_pct, now) -> None:
+    """Feed the closed position to the signal tracker (skopaq/learning/tracker.py).
+
+    The tracker's analytics (win rate by sector and hour, confidence
+    calibration) back the MCP learning tools; it stores to DATABASE_URL and
+    does nothing without it.
+    """
+    try:
+        from skopaq.learning.tracker import SECTOR_MAP, SignalRecord, record_signal
+
+        opened = open_buy.created_at
+        if opened is not None and opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        ist_hour = (opened + timedelta(hours=5, minutes=30)).hour if opened else 0
+        record_signal(SignalRecord(
+            symbol=result.symbol,
+            signal="BUY",
+            confidence=int((open_buy.agent_decision or {}).get("confidence") or 0),
+            entry_price=float(buy_price or 0),
+            exit_price=float(sell_price or 0),
+            pnl=float(pnl),
+            pnl_pct=float(pnl_pct),
+            won=pnl > 0,
+            sector=SECTOR_MAP.get(result.symbol, ""),
+            entry_hour=ist_hour,
+            holding_days=(now - opened).days if opened else 0,
+            exit_reason=(result.signal.reasoning or "")[:50] if result.signal else "",
+        ))
+    except Exception:
+        logger.debug("Signal tracker not updated", exc_info=True)
 
 
 def _format_returns(

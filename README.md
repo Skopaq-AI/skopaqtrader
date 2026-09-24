@@ -363,6 +363,9 @@ skopaq settle                          # Settle past decisions whose holding win
 skopaq memory legacy --export old.json # Back up the pre-v0.5.1 per-agent memories
 skopaq memory legacy --delete          # Delete them (writes a backup first, then asks)
 
+# Track record (forward results: AI calls vs NIFTY, closed trades, confidence calibration)
+skopaq report --days 90
+
 # Kill switch (daemon, CLI, MCP, chat, Telegram all obey it; SELLs stay allowed)
 skopaq halt "broker outage"            # Reject every BUY everywhere
 skopaq resume                          # Lift it
