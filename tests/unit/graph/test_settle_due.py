@@ -111,3 +111,23 @@ def test_cli_settle_command(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "Settled 4 past decision(s)." in result.output
+
+
+def test_cli_settle_without_llm_keys_fails_cleanly(monkeypatch):
+    from typer.testing import CliRunner
+
+    from skopaq.cli import main
+
+    def no_keys(*a, **k):
+        raise ValueError("API key required for Gemini Developer API")
+
+    monkeypatch.setattr(main, "_build_upstream_config", lambda config: {})
+    monkeypatch.setattr(main, "_create_memory_store", lambda config: None)
+    monkeypatch.setattr("skopaq.graph.skopaq_graph.SkopaqTradingGraph",
+                        lambda *a, **k: MagicMock(settle_due=no_keys))
+
+    result = CliRunner().invoke(main.app, ["settle"])
+
+    assert result.exit_code == 1
+    assert "Settling failed: API key required" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)

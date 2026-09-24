@@ -607,7 +607,7 @@ If you discover a security issue, please report it privately rather than opening
 
 ## Testing
 
-The test suite contains **661 unit tests** (no API keys needed) plus integration tests for real broker/LLM calls.
+The test suite contains **674 unit tests** (no API keys needed) plus integration tests for real broker/LLM calls.
 
 ```bash
 # Unit tests — fast, no external dependencies
