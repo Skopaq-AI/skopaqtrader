@@ -13,7 +13,14 @@ import httpx2
 import pytest
 
 from skopaq.llm import jev as jev_module
-from skopaq.llm.jev import EXIT_QUESTION, TRADE_QUESTION, Jev, JevVerdict
+from skopaq.llm.jev import (
+    CATALYST_QUESTIONS,
+    EXIT_QUESTION,
+    TRADE_QUESTION,
+    CatalystScore,
+    Jev,
+    JevVerdict,
+)
 
 
 def _answer(choice: str, probabilities: dict[str, float], confidence: float) -> dict:
@@ -89,6 +96,44 @@ class TestAsk:
         assert asyncio.run(_jev(handler).trade_action("  ")) is None
         assert asyncio.run(_jev(handler).exit_action("")) is None
 
+    def test_catalyst_asks_score_and_noul_in_one_request(self):
+        seen = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            seen.append(json.loads(request.content))
+            return httpx2.Response(200, json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "catalyst": {
+                        "type": "score", "score": 2.3, "confidence": 0.7,
+                        "legend": {str(i): c for i, c in enumerate(
+                            CATALYST_QUESTIONS["catalyst"]["criteria"])},
+                        "probabilities": {"0": 0.05, "1": 0.1, "2": 0.35, "3": 0.5},
+                    },
+                    "specific_news": {"type": "noul", "noul": 0.92},
+                },
+                "usage": {"input_tokens": 80, "output_tokens": 4},
+            })
+
+        score = asyncio.run(_jev(handler).catalyst("TCS", "Won a $2B order from a US bank"))
+
+        assert len(seen) == 1
+        assert seen[0]["state"] == {"stock": "TCS", "reason": "Won a $2B order from a US bank"}
+        assert seen[0]["questions"]["catalyst"]["type"] == "score"
+        assert seen[0]["questions"]["specific_news"]["type"] == "noul"
+        assert score == CatalystScore(
+            score=2.3, confidence=0.7, specific_news=0.92, model="jev-1.13.0")
+
+    def test_catalyst_with_a_missing_answer_returns_none(self):
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, json={
+                "model": "jev-1.13.0",
+                "answers": {"specific_news": {"type": "noul", "noul": 0.2}},
+                "usage": {"input_tokens": 80, "output_tokens": 2},
+            })
+
+        assert asyncio.run(_jev(handler).catalyst("TCS", "Up 3%")) is None
+
     def test_describe_is_compact(self):
         verdict = JevVerdict("SELL", 0.9, {"SELL": 0.95, "HOLD": 0.05}, "jev-1.13.0")
         assert verdict.describe() == "Jev jev-1.13.0: SELL (confidence 0.90; HOLD=0.05, SELL=0.95)"
@@ -123,3 +168,4 @@ class TestGetJev:
         assert isinstance(jev, Jev)
         assert jev.model == "jev-1.13.0"
         assert jev.min_confidence == 0.7
+        assert jev.min_catalyst_score == 1.0

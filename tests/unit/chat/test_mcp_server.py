@@ -47,3 +47,36 @@ def test_mcp_server_has_instructions():
     from skopaq.mcp_server import mcp
 
     assert "trading" in mcp.instructions.lower()
+
+
+def test_scan_market_returns_candidates_as_json():
+    """scan_market used to read attributes ScannerCandidate does not have."""
+    import asyncio
+    import json
+    from unittest.mock import MagicMock, patch
+
+    from skopaq import mcp_server
+    from skopaq.scanner.models import ScannerCandidate
+
+    found = [
+        ScannerCandidate("TCS", "Order win", "high",
+                         metrics={"source": "news", "catalyst_score": 2.4}),
+        ScannerCandidate("INFY", "Volume spike", metrics={"source": "technical"}),
+        ScannerCandidate("WIPRO", "Gap up", metrics={"source": "technical"}),
+    ]
+
+    async def scan_once(self):
+        return found
+
+    with patch.object(mcp_server, "_get_config", return_value=MagicMock()), \
+         patch("skopaq.llm.build_llm_map", return_value={}), \
+         patch("skopaq.llm.jev.get_jev", return_value=None), \
+         patch("skopaq.scanner.ScannerEngine.scan_once", scan_once):
+        result = json.loads(asyncio.run(mcp_server.scan_market(max_candidates=2)))
+
+    assert result == [
+        {"symbol": "TCS", "reason": "Order win", "urgency": "high",
+         "source": "news", "catalyst_score": 2.4},
+        {"symbol": "INFY", "reason": "Volume spike", "urgency": "normal",
+         "source": "technical", "catalyst_score": None},
+    ]

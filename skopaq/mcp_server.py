@@ -354,6 +354,7 @@ async def scan_market(max_candidates: int = 5) -> str:
     from langchain_core.messages import HumanMessage
 
     from skopaq.llm import build_llm_map, extract_text
+    from skopaq.llm.jev import get_jev
     from skopaq.scanner import ScannerEngine, Watchlist
 
     llm_map = build_llm_map()
@@ -397,12 +398,19 @@ async def scan_market(max_candidates: int = 5) -> str:
         llm_screener=lambda p: _invoke("market_analyst", p),
         news_screener=lambda p: _invoke("news_analyst", p),
         social_screener=lambda p: _invoke("social_analyst", p),
+        jev=get_jev(),
     )
     candidates = await scanner.scan_once()
 
     return json.dumps([
-        {"symbol": c.symbol, "score": c.score, "reason": c.reason, "screener": c.screener}
-        for c in candidates
+        {
+            "symbol": c.symbol,
+            "reason": c.reason,
+            "urgency": c.urgency,
+            "source": c.metrics.get("source"),
+            "catalyst_score": c.metrics.get("catalyst_score"),
+        }
+        for c in candidates[:max_candidates]
     ])
 
 
