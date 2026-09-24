@@ -78,6 +78,53 @@ def _ensure_infra():
         _infra_ready = True
 
 
+# ── Authorization ────────────────────────────────────────────────────────────
+
+
+def _allowed_chat_ids() -> set[int]:
+    """SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS plus the owner's SKOPAQ_TELEGRAM_CHAT_ID.
+
+    Both empty: nobody may use the bot.
+    """
+    from skopaq.config import SkopaqConfig
+
+    raw = SkopaqConfig().telegram_allowed_chat_ids
+    raw += "," + os.environ.get("SKOPAQ_TELEGRAM_CHAT_ID", "")
+    allowed = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.lstrip("-").isdigit():
+            allowed.add(int(part))
+    return allowed
+
+
+def is_authorized(chat_id: int) -> bool:
+    return chat_id in _allowed_chat_ids()
+
+
+def authorized(handler):
+    """Run *handler* only for allow-listed chats.
+
+    The bot can place trades and shows the portfolio, so anyone else gets
+    only their chat ID (to add to SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS).
+    """
+    import functools
+
+    @functools.wraps(handler)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id is not None and is_authorized(chat_id):
+            return await handler(update, context)
+        logger.warning("Refused Telegram chat %s (not in the allow-list)", chat_id)
+        if update.message:
+            await update.message.reply_text(
+                "This bot is private. To allow this chat, add its ID to "
+                f"SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS: {chat_id}"
+            )
+
+    return wrapper
+
+
 # ── Command Handlers ─────────────────────────────────────────────────────────
 
 
@@ -114,7 +161,35 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/status — System health, mode, token\n"
         "/pnl — P&L on open positions\n"
         "/analyze SYMBOL — Quick technical analysis\n"
+        "/halt REASON — Kill switch: stop all new BUYs everywhere\n"
+        "/resume — Lift the kill switch\n"
+        "/confirm, /cancel — Answer a pending trade\n"
         "/help — This message"
+    )
+
+
+async def cmd_halt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Kill switch: reject every BUY everywhere until /resume."""
+    from skopaq.execution import kill_switch
+
+    reason = " ".join(context.args or []) or "halted from Telegram"
+    where = kill_switch.halt(reason, by=f"telegram:{update.message.chat.id}")
+    shared = "supabase:system_flags" in where
+    await update.message.reply_text(
+        f"Trading HALTED: {reason}\n"
+        + ("Recorded in Supabase: every process is halted." if shared else
+           "Supabase unavailable: only the bot's machine is halted.")
+    )
+
+
+async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lift the kill switch."""
+    from skopaq.execution import kill_switch
+
+    kill_switch.resume(by=f"telegram:{update.message.chat.id}")
+    after = kill_switch.status(use_cache=False)
+    await update.message.reply_text(
+        after.describe() if after.halted else "Trading resumed."
     )
 
 
@@ -353,47 +428,118 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         agent = session.ensure_agent()
         config = session.thread_config
 
-        # Run agent with auto-resume for interrupts
         result = await agent.ainvoke(
             {"messages": session.get_history()},
             config=config,
         )
+        result = await _resume_until_gated(update, agent, config, result)
+        if result is None:
+            return  # a trade is waiting for /confirm or /cancel
 
-        # Auto-resume interrupted tool calls
-        max_resumes = 10
-        for _ in range(max_resumes):
-            state = agent.get_state(config)
-            if not state.next:
-                break
-            await update.message.chat.send_action("typing")
-            result = await agent.ainvoke(None, config=config)
-
-        # Extract AI response
-        messages = result.get("messages", [])
-        ai_text = ""
-        tool_names = []
-
-        for msg in reversed(messages):
-            if hasattr(msg, "type"):
-                if msg.type == "ai" and msg.content and not ai_text:
-                    ai_text = msg.content if isinstance(msg.content, str) else str(msg.content)
-                elif msg.type == "tool":
-                    tool_names.append(getattr(msg, "name", "tool"))
-
-        if ai_text:
-            session.add_ai_message(ai_text)
-            clean = _clean_markdown(ai_text)
-            # Telegram has a 4096 char limit
-            if len(clean) > 4000:
-                for i in range(0, len(clean), 4000):
-                    await update.message.reply_text(clean[i:i + 4000])
-            else:
-                await update.message.reply_text(clean)
-        else:
-            await update.message.reply_text("I processed your request but have no text response.")
+        await _reply_with_result(update, session, result)
 
     except Exception as exc:
         logger.exception("Chat brain failed")
+        await update.message.reply_text(f"Error: {exc}")
+
+
+def _pending_gated_calls(agent, config) -> list[dict]:
+    """Tool calls the agent is paused on that need the user's confirmation."""
+    from skopaq.chat.agent import GATED_TOOLS
+
+    state = agent.get_state(config)
+    if not state.next:
+        return []
+    messages = state.values.get("messages", [])
+    calls = getattr(messages[-1], "tool_calls", None) or [] if messages else []
+    return [c for c in calls if c.get("name") in GATED_TOOLS]
+
+
+async def _resume_until_gated(update, agent, config, result, max_resumes: int = 10):
+    """Resume past tool interrupts, stopping before any trade.
+
+    Returns the final result, or ``None`` when a gated tool (a trade) is
+    pending: the user is asked to /confirm or /cancel it, as the terminal
+    chat asks before executing.
+    """
+    for _ in range(max_resumes):
+        if not agent.get_state(config).next:
+            return result
+        gated = _pending_gated_calls(agent, config)
+        if gated:
+            details = "\n".join(
+                f"{c['name']}: " + ", ".join(f"{k}={v}" for k, v in c.get("args", {}).items() if v)
+                for c in gated
+            )
+            await update.message.reply_text(
+                f"Confirm trade?\n{details}\n\nReply /confirm to execute or /cancel."
+            )
+            return None
+        await update.message.chat.send_action("typing")
+        result = await agent.ainvoke(None, config=config)
+    return result
+
+
+async def _reply_with_result(update, session, result) -> None:
+    """Send the agent's last message to the chat."""
+    messages = result.get("messages", [])
+    ai_text = ""
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) == "ai" and msg.content:
+            ai_text = msg.content if isinstance(msg.content, str) else str(msg.content)
+            break
+
+    if ai_text:
+        session.add_ai_message(ai_text)
+        clean = _clean_markdown(ai_text)
+        # Telegram has a 4096 char limit
+        if len(clean) > 4000:
+            for i in range(0, len(clean), 4000):
+                await update.message.reply_text(clean[i:i + 4000])
+        else:
+            await update.message.reply_text(clean)
+    else:
+        await update.message.reply_text("I processed your request but have no text response.")
+
+
+async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Execute the trade the agent is waiting on."""
+    await _answer_pending_trade(update, approve=True)
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel the trade the agent is waiting on."""
+    await _answer_pending_trade(update, approve=False)
+
+
+async def _answer_pending_trade(update: Update, approve: bool) -> None:
+    chat_id = update.message.chat.id
+    session = _telegram_sessions.get(chat_id)
+    if session is None:
+        await update.message.reply_text("No trade is waiting for confirmation.")
+        return
+    agent = session.ensure_agent()
+    config = session.thread_config
+    gated = _pending_gated_calls(agent, config)
+    if not gated:
+        await update.message.reply_text("No trade is waiting for confirmation.")
+        return
+    try:
+        if not approve:
+            from langchain_core.messages import ToolMessage
+
+            calls = agent.get_state(config).values["messages"][-1].tool_calls
+            agent.update_state(config, {"messages": [
+                ToolMessage(content="Trade cancelled by user.", tool_call_id=c["id"])
+                for c in calls
+            ]})
+        await update.message.chat.send_action("typing")
+        result = await agent.ainvoke(None, config=config)
+        result = await _resume_until_gated(update, agent, config, result)
+        if result is not None:
+            await _reply_with_result(update, session, result)
+    except Exception as exc:
+        logger.exception("Answering the pending trade failed")
         await update.message.reply_text(f"Error: {exc}")
 
 
@@ -602,22 +748,29 @@ def main() -> None:
         print("Error: SKOPAQ_TELEGRAM_BOT_TOKEN not set")
         return
 
+    allowed = _allowed_chat_ids()
+    if not allowed:
+        print("Warning: SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS is empty — the bot answers "
+              "nobody. Send it /start to learn your chat ID.")
+    # Allow-listed chats get scheduled alerts without re-sending /start after a restart.
+    alert_chat_ids.update(allowed)
+
     print("Starting SkopaqTrader Telegram bot...")
 
     app = Application.builder().token(token).build()
 
     # Register command handlers
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("quote", cmd_quote))
-    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("pnl", cmd_pnl))
-    app.add_handler(CommandHandler("analyze", cmd_analyze))
-    app.add_handler(CommandHandler("login", cmd_login))
+    # Every handler is limited to SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS.
+    for name, handler in (
+        ("start", cmd_start), ("help", cmd_help), ("quote", cmd_quote),
+        ("portfolio", cmd_portfolio), ("status", cmd_status), ("pnl", cmd_pnl),
+        ("analyze", cmd_analyze), ("login", cmd_login), ("halt", cmd_halt),
+        ("resume", cmd_resume), ("confirm", cmd_confirm), ("cancel", cmd_cancel),
+    ):
+        app.add_handler(CommandHandler(name, authorized(handler)))
 
     # Plain text → AI chat brain
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, authorized(handle_text)))
 
     # ── Scheduled jobs (IST = UTC+5:30) ──────────────────────────
     # IST 9:00 = UTC 3:30

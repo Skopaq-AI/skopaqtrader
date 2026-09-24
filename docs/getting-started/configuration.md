@@ -59,7 +59,8 @@ All configuration is via environment variables with the `SKOPAQ_` prefix, loaded
 | Variable | Description |
 |----------|-------------|
 | `SKOPAQ_TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
-| `SKOPAQ_TELEGRAM_CHAT_ID` | Your chat ID for auto-notifications |
+| `SKOPAQ_TELEGRAM_CHAT_ID` | Your chat ID: notifications, and allowed to use the bot |
+| `SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS` | More chat IDs allowed to use the bot (comma-separated) |
 
 ## Ollama (Local Models)
 
