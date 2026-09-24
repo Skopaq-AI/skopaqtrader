@@ -55,7 +55,7 @@ def test_delete_exports_first_then_asks(store, tmp_path, monkeypatch):
     backups = list(tmp_path.glob("legacy-memories-*.json"))
     assert len(backups) == 1
     assert len(json.loads(backups[0].read_text())["rows"]) == 2
-    store.delete_legacy.assert_called_once_with(["bull_memory", "trader_memory"])
+    store.delete_legacy.assert_called_once_with(store.legacy_records.return_value)
 
 
 def test_declining_the_prompt_deletes_nothing(store, tmp_path):

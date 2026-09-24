@@ -608,7 +608,7 @@ def memory_legacy(
     ):
         display_info("Nothing deleted.")
         return
-    deleted = store.delete_legacy([r.role for r in records])
+    deleted = store.delete_legacy(records)
     display_success(f"Deleted {deleted} legacy row(s). Backup: {export}")
 
 
