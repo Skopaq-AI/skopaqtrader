@@ -7,6 +7,7 @@ Uses upstream's real ``TradingMemoryLog`` on a temp file and a mocked
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -278,27 +279,37 @@ class TestRealizedOutcome:
 
 
 class TestLegacyRows:
-    def _store_with_rows(self, *roles):
-        store = _store()
-        store._repo.get_all_roles.return_value = [
-            AgentMemoryRecord(role=role, documents=["doc"], recommendations=["lesson"])
+    def _records(self, *roles):
+        return [
+            AgentMemoryRecord(id=uuid4(), role=role, documents=["doc"], recommendations=["l"])
             for role in roles
         ]
-        store._repo.delete_by_role.return_value = 1
+
+    def _store_with_rows(self, *roles):
+        store = _store()
+        store._repo.get_all_roles.return_value = self._records(*roles)
+        store._repo.delete_by_ids.side_effect = lambda ids: len(ids)
         return store
 
     def test_lists_only_legacy_rows(self):
         store = self._store_with_rows(DECISION_LOG_ROLE, "bull_memory", "trader_memory")
         assert [r.role for r in store.legacy_records()] == ["bull_memory", "trader_memory"]
 
-    def test_deletes_each_legacy_role(self):
+    def test_deletes_exactly_the_given_rows(self):
         store = self._store_with_rows()
-        assert store.delete_legacy(["bull_memory", "bear_memory"]) == 2
-        deleted = [c.args[0] for c in store._repo.delete_by_role.call_args_list]
-        assert deleted == ["bull_memory", "bear_memory"]
+        records = self._records("bull_memory", "bear_memory")
+
+        assert store.delete_legacy(records) == 2
+        store._repo.delete_by_ids.assert_called_once_with([r.id for r in records])
 
     def test_never_deletes_the_decision_log(self):
         store = self._store_with_rows()
         with pytest.raises(ValueError, match="decision_log"):
-            store.delete_legacy(["bull_memory", DECISION_LOG_ROLE])
-        store._repo.delete_by_role.assert_not_called()
+            store.delete_legacy(self._records("bull_memory", DECISION_LOG_ROLE))
+        store._repo.delete_by_ids.assert_not_called()
+
+    def test_rows_without_an_id_are_refused(self):
+        store = self._store_with_rows()
+        with pytest.raises(ValueError, match="id"):
+            store.delete_legacy([AgentMemoryRecord(role="bull_memory")])
+        store._repo.delete_by_ids.assert_not_called()

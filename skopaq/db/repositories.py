@@ -389,12 +389,18 @@ class MemoryRepository:
             return AgentMemoryRecord(**result.data[0])
         return None
 
-    def delete_by_role(self, role: str) -> int:
-        """Delete a role's memory row; returns the number of rows deleted."""
+    def delete_by_ids(self, ids: list[UUID]) -> int:
+        """Delete exactly these memory rows; returns the number deleted.
+
+        By id rather than role: the service-role key bypasses row-level
+        security, so a delete by role would reach every user's rows.
+        """
+        if not ids:
+            return 0
         result = (
             self._client.table(self._table)
             .delete()
-            .eq("role", role)
+            .in_("id", [str(i) for i in ids])
             .execute()
         )
         return len(result.data or [])

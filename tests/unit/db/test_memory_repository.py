@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 from skopaq.db.repositories import MemoryRepository
 
 
-def test_delete_by_role_filters_on_role_and_counts_rows():
+def test_delete_by_ids_deletes_exactly_those_rows():
     client = MagicMock()
-    query = client.table.return_value.delete.return_value.eq.return_value
-    query.execute.return_value.data = [{"role": "bull_memory"}]
+    query = client.table.return_value.delete.return_value.in_.return_value
+    query.execute.return_value.data = [{"id": "a"}, {"id": "b"}]
+    ids = [uuid4(), uuid4()]
 
-    assert MemoryRepository(client).delete_by_role("bull_memory") == 1
+    assert MemoryRepository(client).delete_by_ids(ids) == 2
     client.table.assert_called_once_with("agent_memories")
-    client.table.return_value.delete.return_value.eq.assert_called_once_with("role", "bull_memory")
+    client.table.return_value.delete.return_value.in_.assert_called_once_with(
+        "id", [str(i) for i in ids])
 
 
-def test_delete_by_role_with_no_match_returns_zero():
+def test_delete_by_ids_with_nothing_to_delete_sends_no_request():
     client = MagicMock()
-    client.table.return_value.delete.return_value.eq.return_value.execute.return_value.data = []
-    assert MemoryRepository(client).delete_by_role("bear_memory") == 0
+    assert MemoryRepository(client).delete_by_ids([]) == 0
+    client.table.assert_not_called()

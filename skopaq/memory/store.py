@@ -190,17 +190,22 @@ class MemoryStore:
         """The stored per-agent memory rows from before the v0.5.1 sync."""
         return [r for r in self._repo.get_all_roles() if r.role in LEGACY_MEMORY_ROLES]
 
-    def delete_legacy(self, roles: list[str]) -> int:
-        """Delete legacy per-agent rows; returns the number of rows deleted.
+    def delete_legacy(self, records: list[AgentMemoryRecord]) -> int:
+        """Delete exactly these legacy rows (by id); returns the number deleted.
+
+        Pass the records from :meth:`legacy_records` that were exported, so
+        what is deleted is what was backed up.
 
         Raises:
-            ValueError: if *roles* names anything but a legacy role — the
-                decision log is never deleted here.
+            ValueError: if a record is not a legacy role (the decision log is
+                never deleted here) or has no id.
         """
-        other = sorted(set(roles) - set(LEGACY_MEMORY_ROLES))
+        other = sorted({r.role for r in records} - set(LEGACY_MEMORY_ROLES))
         if other:
             raise ValueError(f"Not legacy memory roles: {', '.join(other)}")
-        return sum(self._repo.delete_by_role(role) for role in roles)
+        if any(r.id is None for r in records):
+            raise ValueError("Cannot delete memory rows without an id")
+        return self._repo.delete_by_ids([r.id for r in records])
 
     def recall(self, situation: str, n_matches: int = 2) -> dict[str, list[dict[str, Any]]]:
         """BM25-rank stored lessons against *situation*.
