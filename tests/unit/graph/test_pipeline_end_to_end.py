@@ -178,3 +178,53 @@ async def test_crypto_run_includes_crypto_analysts(tmp_path, monkeypatch, offlin
         "blockchain_stats", "address_activity", "token_fundamentals", "defi_tvl",
         "chain_tvl_overview", "funding_rates", "open_interest", "long_short_ratio",
     }
+
+
+class RecordingModel(ScriptedModel):
+    """ScriptedModel that records which tool results each analyst call saw."""
+
+    seen: list = Field(default_factory=list)  # (bound tool names, tool-result names)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        if self.tools:
+            self.seen.append((
+                {t.name for t in self.tools},
+                {m.name for m in messages if isinstance(m, ToolMessage)},
+            ))
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [True, False], ids=["parallel", "sequential"])
+async def test_each_analyst_sees_only_its_own_tool_results(
+    tmp_path, monkeypatch, offline, parallel
+):
+    model = RecordingModel(confidence=60)
+    graph = _skopaq_graph(tmp_path, monkeypatch, {"_default": model},
+                          asset_class="crypto", yfinance_symbol_suffix="",
+                          parallel_analysts=parallel)
+
+    result = await graph.analyze("BTC-USD", TRADE_DATE)
+
+    assert result.error is None, result.error
+    assert result.signal.action == "BUY"
+    analyst_calls = [(bound, results) for bound, results in model.seen if results]
+    assert len(analyst_calls) == 6  # every tool-using analyst reported after its tools ran
+    for bound, results in analyst_calls:
+        assert results <= bound, f"an analyst saw another analyst's tool results: {results - bound}"
+
+
+def test_parallel_graph_fans_out_and_joins(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from tradingagents.graph.conditional_logic import ConditionalLogic
+    from tradingagents.graph.setup import GraphSetup
+
+    setup = GraphSetup(MagicMock(), MagicMock(), ConditionalLogic())
+    graph = setup.setup_graph(["market", "social", "news", "fundamentals"], parallel=True).compile()
+
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    for analyst in ("Market Analyst", "Sentiment Analyst", "News Analyst", "Fundamentals Analyst"):
+        assert ("__start__", analyst) in edges
+        assert (analyst, "Bull Researcher") in edges
+    assert not any(node.startswith(("Msg Clear", "tools_")) for node in graph.nodes)

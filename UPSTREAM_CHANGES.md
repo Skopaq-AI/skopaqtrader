@@ -104,6 +104,25 @@ the minimum-confidence safety gate.
 **Backward compatible:** yes — optional field; the rendered decision gains
 one line, which upstream's rating parser ignores.
 
+### 6. Parallel analysts (opt-in)
+
+**Files:** `graph/setup.py`, `graph/trading_graph.py`, `default_config.py`
+
+- New config key `parallel_analysts` (default `False`). When true,
+  `GraphSetup.setup_graph(..., parallel=True)` starts every selected analyst
+  at once and joins them before the Bull Researcher.
+- Each analyst and its tool loop run in their own compiled subgraph
+  (`_isolated_analyst`), seeded with the run's opening message, so analysts
+  never see or route on each other's tool calls; only the analyst's report
+  is written back. No `Msg Clear` nodes are needed in this mode.
+
+**Why:** the analysts are independent, and running them together cuts
+analysis time (about 18% with the four equity analysts on the v0.2.0 base).
+The v0.2.0 fan-out shared one message list between analysts; the subgraphs
+avoid that. `SkopaqTradingGraph` turns it on.
+**Backward compatible:** yes — off by default; upstream's CLI and tests run
+the sequential graph unchanged.
+
 ## Not carried over from the v0.2.0 base
 
 | Former change | Why dropped |
@@ -111,7 +130,7 @@ one line, which upstream's rating parser ignores.
 | Comma-separated indicator splitting | Upstream `get_indicators` does it |
 | Risk manager fundamentals typo fix | Upstream rewrote the agent (Portfolio Manager) |
 | Claude 4.6 in validators / CLI model lists | Upstream accepts unlisted model IDs |
-| Parallel analyst fan-out (reducers, `Done *` nodes) | Upstream runs analysts sequentially and plans parallel execution; not re-applied to avoid diverging from its message handling |
+| Parallel analyst fan-out (reducers, `Done *` nodes) | Replaced by isolated per-analyst subgraphs (modification 6) |
 | Crypto reports in memory lookups (managers, trader, reflection) | Upstream removed per-agent memories |
 
 ## Syncing a newer upstream

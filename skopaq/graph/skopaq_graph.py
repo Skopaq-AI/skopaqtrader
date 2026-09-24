@@ -102,8 +102,9 @@ class SkopaqTradingGraph:
         from tradingagents.graph import TradingAgentsGraph
 
         # Upstream reads its required keys (results_dir, data_cache_dir, ...)
-        # straight from config, so fill whatever the caller left out.
-        config = {**DEFAULT_CONFIG, **self._upstream_config}
+        # straight from config, so fill whatever the caller left out. Analysts
+        # run side by side unless the caller sets parallel_analysts=False.
+        config = {**DEFAULT_CONFIG, "parallel_analysts": True, **self._upstream_config}
         llm_map = config.pop("llm_map", None)
 
         self._graph = TradingAgentsGraph(
