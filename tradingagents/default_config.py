@@ -147,6 +147,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tool_vendors": {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
     },
+    # Skopaq: suffix route_to_vendor appends to bare symbols sent to yfinance.
+    # Indian NSE stocks need ".NS" (RELIANCE -> RELIANCE.NS); empty for US.
+    "yfinance_symbol_suffix": "",
     # Benchmark for alpha calculation in the reflection layer.
     # ``benchmark_ticker`` (when set) overrides the suffix map for all
     # tickers; leave it None to use ``benchmark_map`` for auto-detection

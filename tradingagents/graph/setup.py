@@ -8,11 +8,14 @@ from tradingagents.agents import (
     create_bear_researcher,
     create_bull_researcher,
     create_conservative_debator,
+    create_defi_analyst,
     create_fundamentals_analyst,
+    create_funding_analyst,
     create_market_analyst,
     create_msg_delete,
     create_neutral_debator,
     create_news_analyst,
+    create_onchain_analyst,
     create_portfolio_manager,
     create_research_manager,
     create_sentiment_analyst,
@@ -55,11 +58,27 @@ class GraphSetup:
         quick_thinking_llm: Any,
         deep_thinking_llm: Any,
         conditional_logic: ConditionalLogic,
+        llm_map: dict[str, Any] | None = None,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        ``llm_map`` (Skopaq) optionally assigns an LLM per agent role, e.g.
+        ``{"market_analyst": gemini, "portfolio_manager": claude}``. A role
+        missing from the map uses ``_default``, then the quick/deep pair.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.conditional_logic = conditional_logic
+        self.llm_map = llm_map or {}
+
+    def _get_llm(self, *roles: str, deep: bool = False):
+        """The LLM for the first of ``roles`` in ``llm_map``, else the default."""
+        for role in roles:
+            if role in self.llm_map:
+                return self.llm_map[role]
+        if "_default" in self.llm_map:
+            return self.llm_map["_default"]
+        return self.deep_thinking_llm if deep else self.quick_thinking_llm
 
     def setup_graph(
         self, selected_analysts=("market", "social", "news", "fundamentals")
@@ -72,25 +91,34 @@ class GraphSetup:
                 - "social": Sentiment analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
+                - "onchain" / "defi" / "funding": crypto analysts (Skopaq)
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
+        llm = self._get_llm
         analyst_factories = {
-            "market": lambda: create_market_analyst(self.quick_thinking_llm),
-            "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
-            "news": lambda: create_news_analyst(self.quick_thinking_llm),
-            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
+            "market": lambda: create_market_analyst(llm("market_analyst")),
+            "social": lambda: create_sentiment_analyst(llm("sentiment_analyst", "social_analyst")),
+            "news": lambda: create_news_analyst(llm("news_analyst")),
+            "fundamentals": lambda: create_fundamentals_analyst(llm("fundamentals_analyst")),
+            # Skopaq: crypto-specific analysts
+            "onchain": lambda: create_onchain_analyst(llm("onchain_analyst")),
+            "defi": lambda: create_defi_analyst(llm("defi_analyst")),
+            "funding": lambda: create_funding_analyst(llm("funding_analyst")),
         }
 
-        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
-        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
+        bull_researcher_node = create_bull_researcher(llm("bull_researcher"))
+        bear_researcher_node = create_bear_researcher(llm("bear_researcher"))
+        research_manager_node = create_research_manager(llm("research_manager", deep=True))
+        trader_node = create_trader(llm("trader"))
 
-        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        aggressive_analyst = create_aggressive_debator(llm("aggressive_debator"))
+        neutral_analyst = create_neutral_debator(llm("neutral_debator"))
+        conservative_analyst = create_conservative_debator(llm("conservative_debator"))
+        # "risk_manager" is the role's name before upstream renamed it (v0.2.2).
+        portfolio_manager_node = create_portfolio_manager(
+            llm("portfolio_manager", "risk_manager", deep=True)
+        )
 
         workflow = StateGraph(AgentState)
 
