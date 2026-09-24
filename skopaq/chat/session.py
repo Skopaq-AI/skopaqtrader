@@ -59,7 +59,6 @@ def build_infrastructure(config: SkopaqConfig) -> Infrastructure:
     from skopaq.execution.order_router import OrderRouter
     from skopaq.execution.safety_checker import SafetyChecker
     from skopaq.llm import bridge_env_vars, build_llm_map
-    from skopaq.llm.model_tier import GEMINI_FLASH
 
     # Bridge SKOPAQ_ → standard env vars
     bridge_env_vars(config)
@@ -149,6 +148,8 @@ def build_infrastructure(config: SkopaqConfig) -> Infrastructure:
 def _build_upstream_config(config: SkopaqConfig, llm_map: dict) -> dict:
     """Build config dict for upstream TradingAgentsGraph."""
     from pathlib import Path
+
+    from skopaq.llm.model_tier import GEMINI_FLASH
 
     project_dir = str(Path.cwd())
     is_crypto = config.asset_class == "crypto"
