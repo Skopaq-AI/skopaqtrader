@@ -505,3 +505,34 @@ class TestRecordingWithoutReflection:
         assert trade_id == buy.id
         assert fields["pnl"] == "-1000.00"
         assert "closed_at" in fields
+
+
+class TestSignalTracker:
+    """Closed positions feed skopaq/learning/tracker.py (the MCP learning tools)."""
+
+    @pytest.mark.asyncio
+    async def test_closed_position_is_recorded(self, lifecycle, trade_repo, monkeypatch):
+        buy = _make_open_buy_record(quantity=10)
+        buy.agent_decision = {"action": "BUY", "confidence": 72}
+        trade_repo.find_open_buy.return_value = buy
+        recorded = []
+        monkeypatch.setattr("skopaq.learning.tracker.record_signal", recorded.append)
+
+        await lifecycle.on_trade(_make_sell_result(fill_price=2600.0))
+
+        record, = recorded
+        assert (record.symbol, record.confidence, record.won) == ("RELIANCE", 72, True)
+        assert (record.entry_price, record.exit_price, record.pnl) == (2500.0, 2600.0, 1000.0)
+        assert record.sector == "Energy"
+
+    @pytest.mark.asyncio
+    async def test_tracker_failure_does_not_stop_the_lifecycle(self, lifecycle, trade_repo, graph,
+                                                               monkeypatch):
+        trade_repo.find_open_buy.return_value = _make_open_buy_record()
+
+        def broken(record):
+            raise RuntimeError("no database")
+
+        monkeypatch.setattr("skopaq.learning.tracker.record_signal", broken)
+        await lifecycle.on_trade(_make_sell_result())
+        graph.reflect.assert_called_once()

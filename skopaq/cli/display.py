@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from skopaq.broker.token_manager import TokenHealth
     from skopaq.config import SkopaqConfig
     from skopaq.db.models import AgentMemoryRecord
+    from skopaq.learning.report import Report
     from skopaq.execution.daemon import DaemonSessionReport
     from skopaq.execution.position_monitor import MonitorResult
     from skopaq.graph.skopaq_graph import AnalysisResult
@@ -385,6 +386,65 @@ def display_legacy_memories(records: Sequence[AgentMemoryRecord]) -> None:
         border_style=HEADER_BORDER,
         padding=(1, 1),
     ))
+
+
+def _fmt_pct(value: Optional[float], signed: bool = True) -> str:
+    if value is None:
+        return "—"
+    return f"{value:+.1%}" if signed else f"{value:.0%}"
+
+
+def _fmt_inr(value: Optional[float]) -> str:
+    return "—" if value is None else f"₹{value:,.0f}"
+
+
+def display_report(report: Report) -> None:
+    """``skopaq report``: AI calls, executed trades, confidence calibration."""
+    from skopaq.learning.report import MIN_SAMPLE
+
+    calls, trades = report.calls, report.trades
+
+    summary = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+    summary.add_column("Key", style="bold")
+    summary.add_column("Value")
+    summary.add_row("AI calls", f"{calls.total} ({calls.settled} settled, {calls.pending} pending)")
+    summary.add_row("Directional hit rate",
+                    f"{_fmt_pct(calls.hit_rate, signed=False)} of {calls.directional}")
+    summary.add_row("Buy calls vs NIFTY", _fmt_pct(calls.long_alpha) + " average excess return")
+    summary.add_row("Closed trades", f"{trades.closed} ({_fmt_pct(trades.win_rate, signed=False)} won)")
+    summary.add_row("Realized P&L", _fmt_inr(trades.total_pnl))
+    summary.add_row("Avg win / loss", f"{_fmt_inr(trades.avg_win)} / {_fmt_inr(trades.avg_loss)}")
+    summary.add_row("Profit factor",
+                    "—" if trades.profit_factor is None else f"{trades.profit_factor:.2f}")
+    summary.add_row("Max drawdown", _fmt_inr(trades.max_drawdown))
+    summary.add_row("Per-trade return",
+                    f"{_fmt_pct(trades.avg_return)} avg, "
+                    f"{_fmt_pct(trades.return_std, signed=False)} std")
+
+    ratings = Table(box=box.ROUNDED, header_style="bold magenta", padding=(0, 1))
+    for column in ("Rating", "Calls", "Settled", "Avg return", "Vs NIFTY"):
+        ratings.add_column(column, justify="left" if column == "Rating" else "right")
+    for rating, stats in sorted(calls.by_rating.items()):
+        ratings.add_row(rating, str(stats.calls), str(stats.settled),
+                        _fmt_pct(stats.avg_return), _fmt_pct(stats.avg_alpha))
+
+    calib = Table(box=box.ROUNDED, header_style="bold magenta", padding=(0, 1))
+    for column in ("Confidence", "Trades", "Won"):
+        calib.add_column(column, justify="left" if column == "Confidence" else "right")
+    for bucket in report.calibration:
+        calib.add_row(bucket.label, str(bucket.trades), _fmt_pct(bucket.win_rate, signed=False))
+
+    title = f"[bold]Track record[/bold]  [{DIM}]last {report.days} days · {report.mode}[/{DIM}]"
+    console.print(Panel(summary, title=title, border_style=HEADER_BORDER, padding=(1, 1)))
+    console.print(Panel(ratings, title="[bold]Calls by rating[/bold]", border_style=HEADER_BORDER))
+    console.print(Panel(calib, title="[bold]Confidence calibration[/bold]",
+                        border_style=HEADER_BORDER))
+    if not calls.enough_data:
+        console.print(
+            f"[{WARNING}]{WARN}  Only {calls.directional} settled directional calls; below "
+            f"{MIN_SAMPLE}, hit rates are mostly noise.[/{WARNING}]"
+        )
+    console.print(f"[{DIM}]Sources: {', '.join(report.sources) or 'none'}[/{DIM}]")
 
 
 # ── Token Commands ────────────────────────────────────────────────────────────

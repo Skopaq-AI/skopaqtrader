@@ -29,6 +29,7 @@ from skopaq.cli.display import (
     display_info,
     display_legacy_memories,
     display_monitor_ai_decision,
+    display_report,
     display_monitor_result,
     display_monitor_start,
     display_monitor_tick,
@@ -129,6 +130,22 @@ def status() -> None:
 
     display_welcome()
     display_status(__version__, config, health, llms, halt=kill_switch.status())
+
+
+@app.command("report")
+def report(
+    days: int = typer.Option(90, help="How many days back to include."),
+) -> None:
+    """Track record: AI calls vs NIFTY, closed trades, confidence calibration.
+
+    Read from the decision log and the trades table (paper or live, per
+    SKOPAQ_TRADING_MODE). Forward results only: backtests of an LLM on past
+    dates are contaminated by what the model already knows.
+    """
+    from skopaq.config import SkopaqConfig
+    from skopaq.learning.report import build_report
+
+    display_report(build_report(SkopaqConfig(), days=days))
 
 
 @app.command("halt")
