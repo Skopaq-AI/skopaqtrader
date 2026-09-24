@@ -170,6 +170,34 @@ class TradeRepository:
         return None
 
 
+# ── System Flags ─────────────────────────────────────────────────────────────
+
+
+class SystemFlagRepository:
+    """Key/value flags in the ``system_flags`` table (e.g. the kill switch)."""
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+        self._table = "system_flags"
+
+    def get(self, key: str) -> Optional[dict[str, Any]]:
+        result = (
+            self._client.table(self._table)
+            .select("value")
+            .eq("key", key)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0]["value"] if result.data else None
+
+    def set(self, key: str, value: dict[str, Any]) -> None:
+        self._client.table(self._table).upsert(
+            {"key": key, "value": value,
+             "updated_at": datetime.now(timezone.utc).isoformat()},
+            on_conflict="key",
+        ).execute()
+
+
 # ── Strategy Versions ────────────────────────────────────────────────────────
 
 

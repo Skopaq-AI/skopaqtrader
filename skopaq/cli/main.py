@@ -125,8 +125,52 @@ def status() -> None:
     if config.openrouter_api_key.get_secret_value():
         llms.append("OpenRouter")
 
+    from skopaq.execution import kill_switch
+
     display_welcome()
-    display_status(__version__, config, health, llms)
+    display_status(__version__, config, health, llms, halt=kill_switch.status())
+
+
+@app.command("halt")
+def halt(
+    reason: str = typer.Argument("manual halt", help="Why trading is being halted."),
+) -> None:
+    """Kill switch: reject every BUY everywhere until `skopaq resume`.
+
+    Applies to the daemon, `skopaq trade`, MCP and chat. SELLs stay allowed
+    so open positions can still be protected.
+    """
+    from skopaq.execution import kill_switch
+
+    where = kill_switch.halt(reason, by="cli")
+    display_success(f"Trading HALTED: {reason}\nRecorded in: {', '.join(where)}")
+    if "supabase:system_flags" not in where:
+        display_error(
+            "Not recorded in Supabase, so only this machine is halted. On other "
+            "machines (e.g. the Railway daemon) set SKOPAQ_TRADING_HALTED=true."
+        )
+
+
+@app.command("resume")
+def resume(
+    yes: bool = typer.Option(False, "--yes", help="Resume without asking for confirmation."),
+) -> None:
+    """Lift the kill switch set by `skopaq halt`."""
+    from skopaq.execution import kill_switch
+
+    current = kill_switch.status(use_cache=False)
+    if not current.halted:
+        display_info("Trading is not halted.")
+        return
+    if not yes and not typer.confirm(f"{current.describe()}\nResume trading?"):
+        display_info("Still halted.")
+        return
+    cleared = kill_switch.resume(by="cli")
+    after = kill_switch.status(use_cache=False)
+    if after.halted:
+        display_error(f"Unset SKOPAQ_TRADING_HALTED to resume — {after.describe()}")
+        raise typer.Exit(1)
+    display_success(f"Trading resumed (cleared: {', '.join(cleared) or 'nothing'}).")
 
 
 # ── Analyze ──────────────────────────────────────────────────────────────────

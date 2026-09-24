@@ -69,6 +69,7 @@ class DaemonSessionReport:
     sells_failed: int = 0
     gross_pnl: float = 0.0
     decisions_settled: int = 0
+    halted: str = ""  # kill switch description when the session was halted
     errors: list[str] = field(default_factory=list)
     monitor_result: Optional[MonitorResult] = None
 
@@ -173,6 +174,13 @@ class TradingDaemon:
         try:
             # Phase 1: PRE_OPEN — validate token, build infra
             await self._timed_phase(DaemonPhase.PRE_OPEN, self._phase_pre_open)
+
+            # Kill switch: no scanning or new trades while trading is halted
+            halt = self._halt_status()
+            if halt.halted:
+                report.halted = halt.describe()
+                logger.warning("%s — skipping scan and trades", report.halted)
+                return report
 
             # Phase 2: SCANNING — run multi-model scanner
             candidates = await self._timed_phase(
@@ -397,6 +405,12 @@ class TradingDaemon:
                 logger.info("Stop event — halting analysis")
                 break
 
+            halt = self._halt_status()
+            if halt.halted:
+                report.halted = halt.describe()
+                logger.warning("%s — stopping analysis", report.halted)
+                break
+
             if buys_placed >= self._max_trades:
                 logger.info(
                     "Max trades (%d) reached — stopping analysis",
@@ -518,6 +532,12 @@ class TradingDaemon:
         logger.info("Starting position monitor...")
         return await monitor.run()
 
+    @staticmethod
+    def _halt_status():
+        from skopaq.execution import kill_switch
+
+        return kill_switch.status(use_cache=False)
+
     async def _record_exit(self, signal, execution) -> None:
         """Persist a monitor or close-phase exit like an analysed trade."""
         from skopaq.cli.main import _record_exit
@@ -623,6 +643,8 @@ class TradingDaemon:
         logger.info("Sells failed:        %d", report.sells_failed)
         logger.info("Gross P&L:           %.2f", report.gross_pnl)
         logger.info("Decisions settled:   %d", report.decisions_settled)
+        if report.halted:
+            logger.warning("Halted:              %s", report.halted)
 
         if report.phase_times:
             times = "  ".join(

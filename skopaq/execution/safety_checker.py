@@ -92,6 +92,7 @@ class SafetyChecker:
         """
         rejections: list[str] = []
 
+        self._check_trading_halt(order, rejections)
         self._check_market_hours(rejections)
         self._check_no_short_sale(order, positions, holdings or [], rejections)
         self._check_position_size(order, portfolio_value, rejections)
@@ -183,6 +184,20 @@ class SafetyChecker:
             rejections.append(
                 f"Order value INR {order_value:,.0f} exceeds max INR {self._rules.max_order_value_inr:,.0f}"
             )
+
+    def _check_trading_halt(self, order: OrderRequest, rejections: list[str]) -> None:
+        """Reject every BUY while the kill switch is on (``skopaq halt``).
+
+        SELLs stay allowed so open positions can still be protected; the
+        no-short-sale check means a SELL can only reduce what is held.
+        """
+        if order.side != Side.BUY:
+            return
+        from skopaq.execution import kill_switch
+
+        halt = kill_switch.status()
+        if halt.halted:
+            rejections.append(f"{halt.describe()} — run `skopaq resume` to lift")
 
     def _check_no_short_sale(
         self,

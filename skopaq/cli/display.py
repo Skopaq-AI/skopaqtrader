@@ -99,8 +99,12 @@ def display_status(
     config: SkopaqConfig,
     health: TokenHealth,
     llms: list[str],
+    halt: Optional[Any] = None,
 ) -> None:
-    """Render the full ``skopaq status`` dashboard."""
+    """Render the full ``skopaq status`` dashboard.
+
+    ``halt`` is a ``kill_switch.HaltStatus``; a halt is shown under Mode.
+    """
     table = Table(
         show_header=False,
         box=box.SIMPLE,
@@ -117,6 +121,8 @@ def display_status(
     mode = config.trading_mode.upper()
     mode_style = SUCCESS if mode == "PAPER" else "bold red"
     table.add_row("Mode", f"[{mode_style}]{mode}[/{mode_style}]")
+    if halt is not None and halt.halted:
+        table.add_row("Trading", f"[bold red]{FAIL}  {halt.describe()}[/bold red]")
 
     # Broker
     table.add_row("Broker", f"INDstocks ({config.indstocks_base_url})")

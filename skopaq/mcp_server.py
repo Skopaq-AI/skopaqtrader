@@ -493,6 +493,8 @@ async def system_status() -> str:
         if getattr(config, key_attr).get_secret_value():
             llms.append(name)
 
+    from skopaq.execution import kill_switch
+
     return json.dumps({
         "version": __version__,
         "mode": config.trading_mode,
@@ -500,7 +502,39 @@ async def system_status() -> str:
         "token_valid": health.valid,
         "llms": llms,
         "paper_capital": config.initial_paper_capital,
+        "trading": kill_switch.status().describe(),
     })
+
+
+@mcp.tool()
+async def halt_trading(reason: str = "halted from Claude Code") -> str:
+    """Kill switch: reject every BUY everywhere until resume_trading.
+
+    Applies to the daemon, the CLI, MCP and chat. SELLs stay allowed so open
+    positions can still be protected.
+
+    Args:
+        reason: Why trading is being halted (shown wherever a BUY is refused).
+    """
+    from skopaq.execution import kill_switch
+
+    where = kill_switch.halt(reason, by="mcp")
+    return json.dumps({
+        "halted": True,
+        "reason": reason,
+        "recorded_in": where,
+        "every_process": "supabase:system_flags" in where,
+    })
+
+
+@mcp.tool()
+async def resume_trading() -> str:
+    """Lift the kill switch set by halt_trading or `skopaq halt`."""
+    from skopaq.execution import kill_switch
+
+    cleared = kill_switch.resume(by="mcp")
+    after = kill_switch.status(use_cache=False)
+    return json.dumps({"halted": after.halted, "status": after.describe(), "cleared": cleared})
 
 
 # ── Order Execution ──────────────────────────────────────────────────────────
