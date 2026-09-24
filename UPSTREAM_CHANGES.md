@@ -147,4 +147,5 @@ the sequential graph unchanged.
    run `pytest tests -m "not integration"` there.
 4. Run `python3 -m pytest tests/unit/` — `tests/unit/graph/test_pipeline_end_to_end.py`
    runs the whole graph offline and catches broken wiring.
-5. Update this file.
+5. Update this file, and `UPSTREAM_REF` in `.github/workflows/ci.yml` (CI runs
+   step 3 on every pull request).

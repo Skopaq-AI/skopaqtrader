@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # Only findings that are always bugs gate CI: syntax errors and undefined
+      # names. The rest of ruff's findings pre-date CI.
+      - name: Lint (syntax errors, undefined names)
+        run: ruff check --select E9,F63,F7,F82 skopaq tests cli tradingagents
+
+      - name: Unit tests
+        run: python -m pytest tests/unit/ -q
+
+  upstream:
+    name: Upstream TradingAgents suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The vendored base (UPSTREAM_CHANGES.md). Bump it with each upstream sync.
+      UPSTREAM_REF: f58a585390bb72f274b3361f55a1fb0d3f1a1c32
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # Upstream's own tests, run against our modified tradingagents/ and cli/,
+      # catch Skopaq changes that break upstream behaviour.
+      - name: Fetch upstream tests
+        run: |
+          git clone --quiet https://github.com/TauricResearch/TradingAgents "$RUNNER_TEMP/ta"
+          git -C "$RUNNER_TEMP/ta" checkout --quiet "$UPSTREAM_REF"
+          mkdir "$RUNNER_TEMP/harness"
+          cp -r "$RUNNER_TEMP/ta/tests" "$RUNNER_TEMP/ta/pyproject.toml" "$RUNNER_TEMP/harness/"
+          ln -s "$GITHUB_WORKSPACE/tradingagents" "$RUNNER_TEMP/harness/tradingagents"
+          ln -s "$GITHUB_WORKSPACE/cli" "$RUNNER_TEMP/harness/cli"
+
+      - name: Upstream tests
+        working-directory: ${{ runner.temp }}/harness
+        run: python -m pytest tests -m "not integration" -q -p no:cacheprovider
