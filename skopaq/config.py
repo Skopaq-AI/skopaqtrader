@@ -47,7 +47,13 @@ class SkopaqConfig(BaseSettings):
     perplexity_api_key: SecretStr = SecretStr("")  # Sonar (news)
     xai_api_key: SecretStr = SecretStr("")  # Grok (sentiment)
     openrouter_api_key: SecretStr = SecretStr("")  # OpenRouter (Grok + Perplexity)
-    typesafe_api_key: SecretStr = SecretStr("")  # TypeSafe Jev (social post screening)
+    typesafe_api_key: SecretStr = SecretStr("")  # TypeSafe Jev (post screening, decisions)
+
+    # ── TypeSafe Jev (calibrated decisions; skopaq/llm/jev.py) ─────────
+    jev_enabled: bool = False  # Jev confidence on entries + exit gate
+    jev_model: str = "jev-1.13.0"  # pinned: thresholds are tuned per version
+    jev_min_confidence: float = 0.6  # act on a Jev answer at or above this
+    jev_timeout_seconds: float = 5.0
 
     # ── Cloudflare Tunnel ───────────────────────────────────────────────
     cf_tunnel_id: str = ""

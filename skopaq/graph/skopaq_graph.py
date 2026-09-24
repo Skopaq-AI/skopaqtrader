@@ -58,6 +58,7 @@ class SkopaqTradingGraph:
         selected_analysts: Which upstream analysts to enable.
         debug: Enable upstream debug/tracing mode.
         memory_store: Optional persistence layer for agent memories.
+        jev: Optional ``skopaq.llm.jev.Jev``; defaults to ``get_jev()``.
     """
 
     def __init__(
@@ -67,9 +68,12 @@ class SkopaqTradingGraph:
         selected_analysts: Optional[list[str]] = None,
         debug: bool = False,
         memory_store: Optional[Any] = None,
+        jev: Optional[Any] = None,
     ) -> None:
         self._executor = executor
         self._upstream_config = upstream_config
+        # None → the process-wide Jev from config (off unless SKOPAQ_JEV_ENABLED)
+        self._jev = jev
 
         # Default analyst selection: base 4 + crypto-specific when asset_class == "crypto"
         if selected_analysts is not None:
@@ -123,6 +127,38 @@ class SkopaqTradingGraph:
 
         return self._graph
 
+    async def _apply_jev(self, signal: Optional[TradingSignal], state: Any) -> None:
+        """Calibrate the signal with Jev's reading of the final decision.
+
+        The probability Jev gives the signal's action becomes its confidence
+        (position sizing, minimum-confidence gate). When Jev confidently
+        reads a different trade than the rating says, a BUY or SELL is
+        downgraded to HOLD; Jev never turns a HOLD into a trade. Without Jev
+        the Portfolio Manager's self-reported confidence stands.
+        """
+        from skopaq.llm.jev import get_jev
+
+        jev = self._jev if self._jev is not None else get_jev()
+        if jev is None or signal is None or not isinstance(state, dict):
+            return
+        verdict = await jev.trade_action(str(state.get("final_trade_decision") or ""))
+        if verdict is None:
+            return
+
+        logger.info("[%s] %s", signal.symbol, verdict.describe())
+        if (
+            signal.action != "HOLD"
+            and verdict.choice != signal.action
+            and verdict.confidence >= jev.min_confidence
+        ):
+            logger.warning(
+                "[%s] Decision text reads as %s, not %s — downgrading to HOLD",
+                signal.symbol, verdict.choice, signal.action,
+            )
+            signal.action = "HOLD"
+        signal.confidence = round(100 * verdict.probability(signal.action))
+        signal.reasoning = f"[{verdict.describe()}]\n{signal.reasoning}"
+
     def _upstream_symbol(self, symbol: str) -> str:
         """The ticker as upstream expects it: exchange-qualified for NSE equities.
 
@@ -167,6 +203,12 @@ class SkopaqTradingGraph:
             self._save_memory()
 
             signal = self._parse_signal(symbol, decision, state)
+            try:
+                await self._apply_jev(signal, state)
+            except Exception:
+                logger.warning(
+                    "Jev calibration failed for %s — signal unchanged", symbol, exc_info=True
+                )
             duration = time.monotonic() - start
 
             # Read semantic cache stats (if cache is active)
