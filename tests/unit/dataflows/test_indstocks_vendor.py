@@ -137,3 +137,54 @@ class TestCryptoPairs:
 
         assert _strip_coin("BTC-USD") == "BTC"
         assert _strip_coin("ETHUSDT") == "ETH"
+
+
+class TestInstrumentCache:
+    CSV = "SECURITY_ID,TRADING_SYMBOL,EXCH\n2885,RELIANCE,NSE\n11536,TCS,NSE\n"
+
+    @pytest.fixture
+    def indstocks(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from tradingagents.dataflows.vendors import indstocks
+
+        monkeypatch.setattr(indstocks, "_instrument_cache", {})
+        monkeypatch.setattr(indstocks, "_instrument_cache_ts", 0.0)
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get_instruments = AsyncMock(return_value=self.CSV)
+        monkeypatch.setattr(indstocks, "_get_client", lambda: client)
+        return indstocks, client
+
+    def test_downloads_once_then_serves_from_cache(self, indstocks):
+        import asyncio
+
+        module, client = indstocks
+        assert asyncio.run(module._resolve_scrip_code("RELIANCE.NS")) == "NSE_2885"
+        assert asyncio.run(module._resolve_scrip_code("TCS")) == "NSE_11536"
+        assert client.get_instruments.await_count == 1
+
+    def test_unknown_symbol_does_not_redownload(self, indstocks):
+        import asyncio
+
+        from tradingagents.dataflows.errors import NoMarketDataError
+
+        module, client = indstocks
+        asyncio.run(module._resolve_scrip_code("RELIANCE"))
+        for _ in range(3):
+            with pytest.raises(NoMarketDataError):
+                asyncio.run(module._resolve_scrip_code("NOTREAL"))
+        assert client.get_instruments.await_count == 1
+
+    def test_passed_client_is_reused(self, indstocks):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        module, own_client = indstocks
+        passed = MagicMock()
+        passed.get_instruments = AsyncMock(return_value=self.CSV)
+
+        assert asyncio.run(module._resolve_scrip_code("TCS", "NSE", passed)) == "NSE_11536"
+        passed.get_instruments.assert_awaited_once()
+        own_client.get_instruments.assert_not_awaited()

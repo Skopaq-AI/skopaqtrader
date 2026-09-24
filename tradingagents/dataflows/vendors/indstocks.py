@@ -70,50 +70,50 @@ def _normalize_symbol(symbol: str) -> str:
     return symbol
 
 
-async def _resolve_scrip_code(symbol: str, exchange: str = "NSE") -> str:
+async def _resolve_scrip_code(symbol: str, exchange: str = "NSE", client=None) -> str:
     """Resolve a human-readable symbol to a scrip-code for historical API.
 
     The historical endpoint uses ``scrip-codes=NSE_3045`` format where 3045
-    is the SECURITY_ID from the instruments CSV.
+    is the SECURITY_ID from the instruments CSV. The CSV is downloaded at
+    most once per ``_CACHE_TTL``: while the cache is fresh, a symbol missing
+    from it is reported as unknown without downloading again. Pass an open
+    ``client`` to reuse it for the download.
 
     Returns format: ``NSE_3045``
     """
     import time
 
     symbol = _normalize_symbol(symbol)
+    key = f"{exchange}:{symbol}"
 
     global _instrument_cache, _instrument_cache_ts
 
-    # Check cache freshness
     now = time.time()
-    if _instrument_cache and (now - _instrument_cache_ts) < _CACHE_TTL:
-        key = f"{exchange}:{symbol}"
-        if key in _instrument_cache:
-            return _instrument_cache[key]
+    if not (_instrument_cache and (now - _instrument_cache_ts) < _CACHE_TTL):
+        if client is None:
+            async with _get_client() as own_client:
+                csv_text = await own_client.get_instruments(source="equity")
+        else:
+            csv_text = await client.get_instruments(source="equity")
 
-    # Download instruments CSV
-    client = _get_client()
-    async with client:
-        csv_text = await client.get_instruments(source="equity")
+        # Parse CSV: columns include SECURITY_ID, TRADING_SYMBOL, EXCH
+        reader = csv.DictReader(io.StringIO(csv_text))
+        new_cache: dict[str, str] = {}
+        for row in reader:
+            exch = row.get("EXCH", "").strip()
+            trading_symbol = row.get("TRADING_SYMBOL", "").strip()
+            security_id = row.get("SECURITY_ID", "").strip()
+            if exch and trading_symbol and security_id:
+                new_cache[f"{exch}:{trading_symbol}"] = f"{exch}_{security_id}"
 
-    # Parse CSV: columns include SECURITY_ID, TRADING_SYMBOL, EXCH
-    reader = csv.DictReader(io.StringIO(csv_text))
-    new_cache: dict[str, str] = {}
-    for row in reader:
-        exch = row.get("EXCH", "").strip()
-        trading_symbol = row.get("TRADING_SYMBOL", "").strip()
-        security_id = row.get("SECURITY_ID", "").strip()
-        if exch and trading_symbol and security_id:
-            new_cache[f"{exch}:{trading_symbol}"] = f"{exch}_{security_id}"
+        _instrument_cache = new_cache
+        _instrument_cache_ts = now
 
-    _instrument_cache = new_cache
-    _instrument_cache_ts = now
-
-    key = f"{exchange}:{symbol}"
     if key in _instrument_cache:
         return _instrument_cache[key]
 
-    raise ValueError(f"Symbol '{symbol}' not found in {exchange} instruments")
+    # Lets the router try the next configured vendor (e.g. yfinance).
+    raise NoMarketDataError(symbol, detail=f"not in {exchange} instruments")
 
 
 def _date_to_epoch_ms(date_str: str) -> int:
@@ -130,17 +130,15 @@ def _date_to_epoch_ms(date_str: str) -> int:
 async def _fetch_historical(symbol: str, start_date: str, end_date: str) -> str:
     """Async helper — fetch OHLCV and format as CSV."""
 
-    # Step 1: Resolve symbol to scrip-code
-    scrip_code = await _resolve_scrip_code(symbol, "NSE")
-
-    # Step 2: Convert dates to epoch milliseconds (API requirement)
+    # Dates → epoch milliseconds (API requirement). Inclusive of end_date,
+    # like the yfinance vendor: up to the next midnight IST.
     start_ms = _date_to_epoch_ms(start_date)
-    # Inclusive of end_date, like the yfinance vendor: up to the next midnight IST.
     end_ms = _date_to_epoch_ms(end_date) + 24 * 60 * 60 * 1000 - 1
 
-    # Step 3: Fetch candles
+    # One client for resolving the scrip-code and fetching the candles
     client = _get_client()
     async with client:
+        scrip_code = await _resolve_scrip_code(symbol, "NSE", client)
         candles = await client.get_historical(
             scrip_code=scrip_code,
             interval="1day",
@@ -174,11 +172,10 @@ async def _fetch_quote(symbol: str) -> str:
     Resolves the human-readable symbol to a scrip-code, then fetches
     the full quote using ``scrip-codes`` parameter.
     """
-    # Resolve symbol to scrip-code (e.g. RELIANCE → NSE_2885)
-    scrip_code = await _resolve_scrip_code(symbol, "NSE")
-
     client = _get_client()
     async with client:
+        # Resolve symbol to scrip-code (e.g. RELIANCE → NSE_2885)
+        scrip_code = await _resolve_scrip_code(symbol, "NSE", client)
         quote = await client.get_quote(scrip_code=scrip_code, symbol=symbol)
 
     header = f"# Quote for {symbol.upper()}\n"
