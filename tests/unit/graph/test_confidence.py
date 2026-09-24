@@ -204,7 +204,7 @@ class TestRatingToAction:
         ("Buy", "BUY"),
         ("Overweight", "BUY"),
         ("Hold", "HOLD"),
-        ("Underweight", "SELL"),
+        ("Underweight", "HOLD"),  # no partial trims; never a short sale
         ("Sell", "SELL"),
         ("REVIEW", "HOLD"),
         ("", "HOLD"),

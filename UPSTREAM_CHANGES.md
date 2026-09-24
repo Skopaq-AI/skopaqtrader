@@ -44,8 +44,9 @@ diff -ru -x __pycache__ /tmp/ta/cli cli        # expected: no differences
 
 - New vendor for NSE OHLCV from the INDstocks broker API, returning the same
   CSV shape as yfinance. Strips `.NS`/`.BO` suffixes, bridges the async
-  client to sync, and raises `NoMarketDataError` on an empty result so the
-  router can try the next configured vendor.
+  client to sync, includes the `end_date` candle (like the yfinance vendor),
+  and raises `NoMarketDataError` on an empty result so the router can try
+  the next configured vendor.
 - Registered first in `VENDOR_LIST` and in `VENDOR_METHODS["get_stock_data"]`.
 
 **Backward compatible:** yes — only used when a config names `indstocks`
@@ -80,6 +81,9 @@ reports), `graph/setup.py` (factories), `graph/trading_graph.py` (state log),
 `agents/risk_mgmt/{aggressive,conservative,neutral}_debator.py`, which append
 `crypto_reports_section(state)` after the fundamentals report.
 
+The crypto vendors accept yfinance-style pairs (`BTC-USD`), the form the
+analysis runs on, as well as Binance pairs (`BTCUSDT`) and bare coins.
+
 **Why:** Skopaq selects these analysts when `asset_class == "crypto"`
 (Blockchair/Blockchain.info, DeFiLlama/CoinGecko, Binance Futures data).
 **Backward compatible:** yes — analysts run only when selected, and the
@@ -89,8 +93,9 @@ report section is empty for equity runs, so those prompts are unchanged.
 
 **Files:** `agents/schemas.py`, `agents/managers/portfolio_manager.py`
 
-- `PortfolioDecision.confidence: int | None` (0–100; anything else is
-  coerced to `None`), rendered as `**Confidence**: N` by
+- `PortfolioDecision.confidence: int | None` (0–100; a value between 0 and
+  1 is read as a fraction, anything else becomes `None`), rendered as
+  `**Confidence**: N` by
   `render_pm_decision`, and listed in the prompt's output sections for the
   free-text fallback.
 

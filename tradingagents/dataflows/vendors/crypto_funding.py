@@ -20,6 +20,9 @@ _TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 def _normalize_symbol(symbol: str) -> str:
     """Ensure symbol is in BTCUSDT format (Binance Futures convention)."""
     symbol = symbol.upper()
+    # yfinance-style dash pair (BTC-USD) → bare coin
+    if "-" in symbol:
+        symbol = symbol.split("-")[0]
     # If already has a quote suffix, return as-is
     for suffix in ("USDT", "BUSD", "USDC"):
         if symbol.endswith(suffix):

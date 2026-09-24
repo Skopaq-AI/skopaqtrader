@@ -295,6 +295,7 @@ async def analyze_stock(symbol: str, date: str = "") -> str:
     executor = Executor(router, safety)
 
     llm_map = build_llm_map()
+    is_crypto = config.asset_class == "crypto"
     upstream = {
         "llm_provider": "google",
         "deep_think_llm": "gemini-3-flash-preview",
@@ -303,6 +304,13 @@ async def analyze_stock(symbol: str, date: str = "") -> str:
         "max_debate_rounds": config.max_debate_rounds,
         "max_risk_discuss_rounds": config.max_risk_discuss_rounds,
         "asset_class": config.asset_class,
+        "data_vendors": {
+            "core_stock_apis": "yfinance" if is_crypto else "indstocks,yfinance",
+            "technical_indicators": "yfinance",
+            "fundamental_data": "yfinance",
+            "news_data": "yfinance",
+        },
+        "yfinance_symbol_suffix": "" if is_crypto else ".NS",
     }
 
     analysts = [a.strip() for a in config.selected_analysts.split(",") if a.strip()]

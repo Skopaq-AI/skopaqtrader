@@ -237,8 +237,13 @@ class TestHandleSell:
         reflect_arg = graph.reflect.call_args[0][0]
         assert "RELIANCE" in reflect_arg
         assert "PROFIT" in reflect_arg
-        # The symbol lets the graph settle that ticker's pending decisions
+        # The symbol lets the graph settle that ticker's pending decisions,
+        # the opening decision with the realized return
         assert graph.reflect.call_args.kwargs["symbol"] == "RELIANCE"
+        buy_price = float(open_buy.fill_price or open_buy.price)
+        assert graph.reflect.call_args.kwargs["realized_return"] == pytest.approx(
+            (2700.0 - buy_price) / buy_price
+        )
 
     @pytest.mark.asyncio
     async def test_sell_computes_correct_pnl(self, lifecycle, trade_repo, graph):

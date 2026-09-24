@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -237,23 +237,97 @@ class SkopaqTradingGraph:
         )
         return result
 
-    def reflect(self, returns_losses: Any, symbol: Optional[str] = None) -> None:
-        """Settle past decisions for *symbol* in upstream's decision log.
+    def reflect(
+        self,
+        returns_losses: Any,
+        symbol: Optional[str] = None,
+        realized_return: Optional[float] = None,
+        opened_on: Optional[str] = None,
+    ) -> None:
+        """Record a closed position's outcome in upstream's decision log.
 
-        Called after a position close (SELL). Upstream (v0.2.4+) no longer
-        keeps per-agent memories: each decision is logged as it is made and
-        settled once its holding window has traded, with a reflection the
-        Portfolio Manager reads on later runs. The realized-P&L lesson itself
-        is recorded by ``skopaq.memory.reflection``; ``returns_losses`` is
-        only logged here.
+        Called after a position close (SELL). Upstream (v0.2.4+) keeps no
+        per-agent memories: each decision is logged as it is made and later
+        settled with its outcome and a reflection, which the Portfolio
+        Manager reads on later runs.
+
+        With ``realized_return`` (e.g. ``-0.012`` for -1.2%), the pending
+        decision that opened the position — the one logged on ``opened_on``,
+        else the latest before today — is settled with the realized trade
+        outcome and a reflection on ``returns_losses``. Any other pending
+        decision for *symbol* whose holding window has traded is then
+        settled the usual upstream way.
         """
         if not symbol:
             logger.info("Reflection skipped — no symbol to settle (%s)", returns_losses)
             return
         graph = self._ensure_graph()
-        graph.settle_pending(self._upstream_symbol(symbol))
+        ticker = self._upstream_symbol(symbol)
+        if realized_return is not None:
+            try:
+                self._settle_realized(
+                    graph, ticker, realized_return, opened_on, str(returns_losses)
+                )
+            except Exception:
+                logger.warning(
+                    "Recording the realized outcome failed for %s", symbol, exc_info=True
+                )
+        graph.settle_pending(ticker)
         logger.info("Settled pending decisions for %s", symbol)
         self._save_memory()
+
+    @staticmethod
+    def _settle_realized(
+        graph: Any,
+        ticker: str,
+        realized_return: float,
+        opened_on: Optional[str],
+        returns_losses: str,
+    ) -> None:
+        """Settle the decision behind a closed trade with its realized return."""
+        from datetime import date
+
+        import numpy as np
+
+        from tradingagents.dataflows.vendors.yahoo.market import get_closes
+        from tradingagents.graph.settlement import resolve_benchmark
+
+        today = date.today().isoformat()
+        pending = [e for e in graph.memory_log.get_pending_entries() if e["ticker"] == ticker]
+        chosen = (
+            [e for e in pending if e["date"] == opened_on]
+            or [e for e in pending if e["date"] < today]
+        )
+        if not chosen:
+            logger.info("No pending decision to settle for %s", ticker)
+            return
+        entry = chosen[-1]
+
+        # Alpha against the market over the same span; the raw return alone
+        # when the benchmark cannot be priced.
+        benchmark = resolve_benchmark(ticker, graph.config)
+        try:
+            tomorrow = (date.today() + timedelta(days=1)).isoformat()
+            closes = get_closes(benchmark, entry["date"], tomorrow)
+            bench_return = float((closes.iloc[-1] - closes.iloc[0]) / closes.iloc[0])
+        except Exception:
+            bench_return, benchmark = 0.0, f"{benchmark} (unavailable, taken as 0%)"
+        alpha = realized_return - bench_return
+        holding_days = max(1, int(np.busday_count(entry["date"], today)))
+
+        reflection = graph.reflector.reflect_on_final_decision(
+            final_decision=f"{entry.get('decision', '')}\n\nRealized trade:\n{returns_losses}",
+            raw_return=realized_return,
+            alpha_return=alpha,
+            benchmark_name=benchmark,
+            holding_days=holding_days,
+        )
+        graph.memory_log.update_with_outcome(
+            ticker, entry["date"], realized_return, alpha, holding_days,
+            reflection, resolution_date=today,
+        )
+        logger.info("Settled %s decision of %s with realized return %+.2f%%",
+                    ticker, entry["date"], realized_return * 100)
 
     # ── Cache stats ────────────────────────────────────────────────────
 
@@ -340,15 +414,17 @@ class SkopaqTradingGraph:
         )
 
 
-# Upstream's 5-tier rating → Skopaq's order action. Overweight/Underweight
-# carry the same direction as Buy/Sell (upstream: "gradually increase" /
-# "reduce exposure"); confidence scales the position size. REVIEW means the
-# decision had no readable rating, which must never become a trade.
+# Upstream's 5-tier rating → Skopaq's order action. Overweight ("gradually
+# increase exposure") enters like Buy; confidence scales the position size.
+# Underweight ("reduce exposure, take partial profits") is not a sell: an
+# order cannot trim part of a position, and for a symbol we do not hold a
+# SELL would be a short sale. Exits stay with the sell analyst. REVIEW means
+# the decision had no readable rating, which must never become a trade.
 _RATING_ACTIONS = {
     "BUY": "BUY",
     "OVERWEIGHT": "BUY",
     "HOLD": "HOLD",
-    "UNDERWEIGHT": "SELL",
+    "UNDERWEIGHT": "HOLD",
     "SELL": "SELL",
 }
 

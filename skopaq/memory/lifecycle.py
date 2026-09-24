@@ -119,7 +119,8 @@ class TradeLifecycleManager:
         )
         buy_price = open_buy.fill_price or open_buy.price
 
-        if sell_price is not None and buy_price is not None:
+        prices_known = sell_price is not None and buy_price is not None
+        if prices_known:
             pnl = (Decimal(str(sell_price)) - buy_price) * open_buy.quantity
             pnl_pct = ((Decimal(str(sell_price)) - buy_price) / buy_price * 100) if buy_price else Decimal("0")
         else:
@@ -169,7 +170,12 @@ class TradeLifecycleManager:
         # Trigger reflection with P&L outcome
         returns_losses = _format_returns(symbol, pnl, pnl_pct, buy_price, sell_price)
         try:
-            self._graph.reflect(returns_losses, symbol=symbol)
+            self._graph.reflect(
+                returns_losses,
+                symbol=symbol,
+                realized_return=float(pnl_pct) / 100 if prices_known else None,
+                opened_on=open_buy.created_at.date().isoformat() if open_buy.created_at else None,
+            )
             logger.info("Reflection triggered for %s (P&L=%.2f)", symbol, pnl)
         except Exception:
             logger.warning(

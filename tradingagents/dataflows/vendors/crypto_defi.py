@@ -57,8 +57,11 @@ _TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 
 
 def _strip_coin(symbol: str) -> str:
-    """Extract base coin from a Binance-style pair (e.g. BTCUSDT → BTC)."""
+    """Extract base coin from a trading pair (e.g. BTCUSDT → BTC, BTC-USD → BTC)."""
     symbol = symbol.upper()
+    # yfinance-style dash pair (BTC-USD)
+    if "-" in symbol:
+        return symbol.split("-")[0]
     for suffix in ("USDT", "BUSD", "USDC", "USD"):
         if symbol.endswith(suffix) and len(symbol) > len(suffix):
             return symbol[: -len(suffix)]

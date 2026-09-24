@@ -135,7 +135,8 @@ async def _fetch_historical(symbol: str, start_date: str, end_date: str) -> str:
 
     # Step 2: Convert dates to epoch milliseconds (API requirement)
     start_ms = _date_to_epoch_ms(start_date)
-    end_ms = _date_to_epoch_ms(end_date)
+    # Inclusive of end_date, like the yfinance vendor: up to the next midnight IST.
+    end_ms = _date_to_epoch_ms(end_date) + 24 * 60 * 60 * 1000 - 1
 
     # Step 3: Fetch candles
     client = _get_client()

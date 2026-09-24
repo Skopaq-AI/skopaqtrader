@@ -276,11 +276,16 @@ class PortfolioDecision(BaseModel):
     @field_validator("confidence", mode="before")
     @classmethod
     def _coerce_confidence(cls, v):
-        """A 0-100 integer, or None for anything that is not one number."""
+        """A 0-100 integer, or None for anything that is not one number.
+
+        A value strictly between 0 and 1 is read as a fraction (0.82 -> 82).
+        """
         number = _coerce_optional_float(v.rstrip("%") if isinstance(v, str) else v)
-        if isinstance(number, (int, float)) and 0 <= number <= 100:
-            return round(number)
-        return None
+        if not isinstance(number, (int, float)) or isinstance(number, bool):
+            return None
+        if 0 < number < 1:
+            number *= 100
+        return round(number) if 0 <= number <= 100 else None
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
