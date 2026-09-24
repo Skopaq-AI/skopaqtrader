@@ -87,7 +87,7 @@ Read-only tools (quotes, positions, status) are auto-allowed. Tools that modify 
 | `get_positions`, `get_holdings`, `get_funds` | `place_gtt_order` |
 | `get_orders`, `system_status` | `setup_swing_trade` |
 | `analyze_stock`, `scan_market`, `check_safety` | `suggest_option_trade` |
-| `gather_*` data tools, `recall_agent_memories` | `save_trade_reflection` |
+| `gather_*` data tools, `recall_agent_memories`, `quick_decision` | `save_trade_reflection` |
 
 ## Next Steps
 

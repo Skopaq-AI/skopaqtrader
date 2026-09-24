@@ -173,6 +173,21 @@ class Jev:
                 logger.warning("Jev returned no choice answer", exc_info=True)
             return None
 
+    async def noul(self, state: Any, instructions: str) -> Optional[tuple[float, str]]:
+        """Probability that *instructions* (a yes/no question) holds for *state*.
+
+        Returns ``(probability_yes, model)``, or ``None`` on any failure.
+        """
+        response = await self._system_one(
+            state, {"answer": {"type": "noul", "instructions": instructions}}
+        )
+        try:
+            return float(response.nouls["answer"].noul), response.model
+        except Exception:
+            if response is not None:
+                logger.warning("Jev returned no yes/no answer", exc_info=True)
+            return None
+
     async def trade_action(self, decision: str) -> Optional[JevVerdict]:
         """BUY / HOLD / SELL probabilities for a Portfolio Manager decision."""
         if not decision.strip():

@@ -454,7 +454,7 @@ All tools are callable by Claude Code natively. Read-only tools are auto-approve
 |----------|-------|
 | **Market Data** | `get_quote`, `get_historical` |
 | **Portfolio** | `get_positions`, `get_holdings`, `get_funds`, `get_orders` |
-| **Analysis** | `analyze_stock`, `scan_market`, `check_safety` |
+| **Analysis** | `analyze_stock`, `scan_market`, `check_safety`, `quick_decision` (Jev) |
 | **Execution** | `place_order` (paper/live, safety-checked) |
 | **Data Pipeline** | `gather_market_data`, `gather_news_data`, `gather_fundamentals_data`, `gather_social_data`, `gather_all_analysis_data` |
 | **Memory** | `recall_agent_memories`, `save_trade_reflection` |

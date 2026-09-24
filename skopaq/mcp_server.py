@@ -1329,6 +1329,70 @@ async def gather_social_data(symbol: str, date: str = "") -> str:
 
 
 @mcp.tool()
+async def quick_decision(
+    text: str,
+    question: str,
+    options: list[str] | None = None,
+) -> str:
+    """Answer a question about a text with calibrated probabilities (TypeSafe Jev).
+
+    Takes about a tenth of a second, instead of a full LLM analysis. Use it
+    for semantic judgments: "Is this headline bullish for the stock?",
+    "Does this filing announce a buyback?", "Which of BUY / HOLD / SELL does
+    this note recommend?". Jev is weak at arithmetic and dates, so do not
+    ask it to compare numbers or work out when something happened.
+
+    Needs SKOPAQ_JEV_ENABLED=true and SKOPAQ_TYPESAFE_API_KEY.
+
+    Args:
+        text: The text to judge (a headline, report, filing excerpt, ...).
+        question: What to decide about the text. Without options it must be
+            a yes/no question.
+        options: Optional labels to choose between (2-10), e.g.
+            ["BUY", "HOLD", "SELL"]. Omit for a yes/no answer.
+    """
+    from skopaq.llm.jev import get_jev
+
+    if not text.strip() or not question.strip():
+        return json.dumps({"error": "text and question are required"})
+    labels = list(dict.fromkeys(o.strip() for o in options or [] if o.strip()))
+    if options is not None and not 2 <= len(labels) <= 10:
+        return json.dumps({"error": "options needs 2-10 distinct labels"})
+
+    jev = get_jev()
+    if jev is None:
+        return json.dumps({
+            "error": "Jev is off: set SKOPAQ_JEV_ENABLED=true and SKOPAQ_TYPESAFE_API_KEY",
+        })
+
+    instructions = f"About `text`: {question.strip()}"
+    if labels:
+        verdict = await jev.ask(
+            {"text": text},
+            {"type": "choice", "instructions": instructions,
+             "criteria": {label: label for label in labels}},
+        )
+        if verdict is None:
+            return json.dumps({"error": "Jev request failed"})
+        return json.dumps({
+            "answer": verdict.choice,
+            "confidence": round(verdict.confidence, 3),
+            "probabilities": {k: round(v, 3) for k, v in verdict.probabilities.items()},
+            "model": verdict.model,
+        })
+
+    result = await jev.noul({"text": text}, instructions)
+    if result is None:
+        return json.dumps({"error": "Jev request failed"})
+    probability, model = result
+    return json.dumps({
+        "answer": "yes" if probability >= 0.5 else "no",
+        "probability_yes": round(probability, 3),
+        "model": model,
+    })
+
+
+@mcp.tool()
 async def recall_agent_memories(situation_summary: str) -> str:
     """Retrieve past lessons from agent memory using BM25 similarity search.
 

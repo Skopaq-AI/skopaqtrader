@@ -31,7 +31,7 @@ The daemon (`skopaq/execution/daemon.py`) is a finite state machine that compose
 
 ## MCP Server (Claude Code Integration)
 
-SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 11 trading tools directly inside Claude Code. Configured in `.claude/.mcp.json`.
+SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 37 trading tools directly inside Claude Code (the core ones are listed below). Configured in `.claude/.mcp.json`.
 
 **IMPORTANT**: When fetching market data, quotes, or portfolio info — always use the MCP tools (`mcp__skopaq__*`). Do NOT write Python/Bash code to call `INDstocksClient` or other broker modules directly. The MCP tools handle authentication, scrip resolution, and error handling internally.
 
@@ -47,6 +47,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 11 
 | `get_orders` | Today's orders with status |
 | `analyze_stock` | Full multi-agent AI analysis (2-5 min) |
 | `scan_market` | Multi-model market scan for candidates |
+| `quick_decision` | Jev's calibrated answer to a question about a text (~0.1 s) |
 | `check_safety` | Pre-trade safety validation |
 | `place_order` | Execute order (paper/live, safety-checked) |
 | `system_status` | Health check (version, mode, LLMs) |

@@ -134,6 +134,24 @@ class TestAsk:
 
         assert asyncio.run(_jev(handler).catalyst("TCS", "Up 3%")) is None
 
+    def test_noul_returns_probability_and_model(self):
+        seen = {}
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            seen["body"] = json.loads(request.content)
+            return httpx2.Response(200, json={
+                "model": "jev-1.13.0",
+                "answers": {"answer": {"type": "noul", "noul": 0.83}},
+                "usage": {"input_tokens": 40, "output_tokens": 1},
+            })
+
+        result = asyncio.run(_jev(handler).noul({"text": "Board approves buyback"},
+                                                "Does `text` announce a buyback?"))
+
+        assert result == (0.83, "jev-1.13.0")
+        assert seen["body"]["questions"]["answer"] == {
+            "type": "noul", "instructions": "Does `text` announce a buyback?"}
+
     def test_describe_is_compact(self):
         verdict = JevVerdict("SELL", 0.9, {"SELL": 0.95, "HOLD": 0.05}, "jev-1.13.0")
         assert verdict.describe() == "Jev jev-1.13.0: SELL (confidence 0.90; HOLD=0.05, SELL=0.95)"

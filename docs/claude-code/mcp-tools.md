@@ -68,6 +68,7 @@ These tools fetch raw data for Claude to reason over directly, bypassing the mul
 | `gather_fundamentals_data` | Profile, balance sheet, cash flow, income statement | `symbol`, `date=""` |
 | `gather_social_data` | Social media sentiment and company news | `symbol`, `date=""` |
 | `recall_agent_memories` | BM25 search over past trade lessons | `situation_summary` |
+| `quick_decision` | Calibrated answer to a question about a text via TypeSafe Jev (~0.1 s; needs `SKOPAQ_JEV_ENABLED`) | `text`, `question`, `options=None` |
 | `save_trade_reflection` | Store post-trade lesson for future reference | `symbol`, `side`, `entry_price`, `exit_price`, `pnl`, `pnl_pct` |
 
 ## Order Execution
