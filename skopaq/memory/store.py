@@ -13,8 +13,9 @@ entry): ``load()`` restores it into the graph's log file before a run,
 ``save()`` uploads it afterwards.
 
 The per-agent BM25 memories of upstream v0.2.0 (``bull_memory`` etc.)
-are retired upstream. Their rows are left untouched and remain
-searchable through :meth:`MemoryStore.recall`.
+are retired upstream. Their rows stay searchable through
+:meth:`MemoryStore.recall` until removed with ``skopaq memory legacy
+--delete``, which exports them first.
 """
 
 from __future__ import annotations
@@ -184,6 +185,22 @@ class MemoryStore:
         settled = [i for i, e in enumerate(entries) if not _is_pending(e)]
         dropped = set(settled[: max(0, len(settled) - self._max_entries)])
         return [e for i, e in enumerate(entries) if i not in dropped]
+
+    def legacy_records(self) -> list[AgentMemoryRecord]:
+        """The stored per-agent memory rows from before the v0.5.1 sync."""
+        return [r for r in self._repo.get_all_roles() if r.role in LEGACY_MEMORY_ROLES]
+
+    def delete_legacy(self, roles: list[str]) -> int:
+        """Delete legacy per-agent rows; returns the number of rows deleted.
+
+        Raises:
+            ValueError: if *roles* names anything but a legacy role — the
+                decision log is never deleted here.
+        """
+        other = sorted(set(roles) - set(LEGACY_MEMORY_ROLES))
+        if other:
+            raise ValueError(f"Not legacy memory roles: {', '.join(other)}")
+        return sum(self._repo.delete_by_role(role) for role in roles)
 
     def recall(self, situation: str, n_matches: int = 2) -> dict[str, list[dict[str, Any]]]:
         """BM25-rank stored lessons against *situation*.

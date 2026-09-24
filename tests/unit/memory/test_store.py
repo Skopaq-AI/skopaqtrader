@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from skopaq.db.models import AgentMemoryRecord
 from skopaq.memory.store import (
     DECISION_LOG_ROLE,
@@ -270,3 +272,33 @@ class TestRealizedOutcome:
         assert (entry["raw"], entry["alpha"]) == ("+3.0%", "+3.0%")
         kwargs = upstream.reflector.reflect_on_final_decision.call_args.kwargs
         assert "unavailable" in kwargs["benchmark_name"]
+
+
+# ── Legacy per-agent rows ───────────────────────────────────────────────────
+
+
+class TestLegacyRows:
+    def _store_with_rows(self, *roles):
+        store = _store()
+        store._repo.get_all_roles.return_value = [
+            AgentMemoryRecord(role=role, documents=["doc"], recommendations=["lesson"])
+            for role in roles
+        ]
+        store._repo.delete_by_role.return_value = 1
+        return store
+
+    def test_lists_only_legacy_rows(self):
+        store = self._store_with_rows(DECISION_LOG_ROLE, "bull_memory", "trader_memory")
+        assert [r.role for r in store.legacy_records()] == ["bull_memory", "trader_memory"]
+
+    def test_deletes_each_legacy_role(self):
+        store = self._store_with_rows()
+        assert store.delete_legacy(["bull_memory", "bear_memory"]) == 2
+        deleted = [c.args[0] for c in store._repo.delete_by_role.call_args_list]
+        assert deleted == ["bull_memory", "bear_memory"]
+
+    def test_never_deletes_the_decision_log(self):
+        store = self._store_with_rows()
+        with pytest.raises(ValueError, match="decision_log"):
+            store.delete_legacy(["bull_memory", DECISION_LOG_ROLE])
+        store._repo.delete_by_role.assert_not_called()

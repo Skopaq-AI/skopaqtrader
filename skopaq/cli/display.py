@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from skopaq.broker.models import ExecutionResult, TradingSignal
     from skopaq.broker.token_manager import TokenHealth
     from skopaq.config import SkopaqConfig
+    from skopaq.db.models import AgentMemoryRecord
     from skopaq.execution.daemon import DaemonSessionReport
     from skopaq.execution.position_monitor import MonitorResult
     from skopaq.graph.skopaq_graph import AnalysisResult
@@ -361,6 +362,23 @@ def display_scan_results(candidates: Sequence[ScannerCandidate]) -> None:
         padding=(1, 1),
     )
     console.print(panel)
+
+
+def display_legacy_memories(records: Sequence[AgentMemoryRecord]) -> None:
+    """Table of the pre-v0.5.1 per-agent memory rows."""
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold magenta", padding=(0, 1))
+    table.add_column("Role", style="bold cyan")
+    table.add_column("Lessons", justify="right")
+    table.add_column("Last updated", style=DIM)
+    for record in records:
+        updated = record.updated_at.strftime("%Y-%m-%d %H:%M") if record.updated_at else "—"
+        table.add_row(record.role, str(len(record.documents)), updated)
+    console.print(Panel(
+        table,
+        title="[bold]Legacy agent memories[/bold]",
+        border_style=HEADER_BORDER,
+        padding=(1, 1),
+    ))
 
 
 # ── Token Commands ────────────────────────────────────────────────────────────
