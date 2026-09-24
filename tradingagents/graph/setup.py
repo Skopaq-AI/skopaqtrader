@@ -50,6 +50,38 @@ def _tools_or_clear(spec):
     return route
 
 
+def _isolated_analyst(spec, analyst_node):
+    """Skopaq: one analyst and its tool loop as a node with private messages.
+
+    The analyst runs in its own compiled subgraph, seeded with the run's
+    opening message, so analysts running side by side never see (or route
+    on) each other's tool calls. Only the analyst's report reaches the main
+    graph's state.
+    """
+    sub = StateGraph(AgentState)
+    sub.add_node(spec.agent_node, analyst_node)
+    sub.add_edge(START, spec.agent_node)
+    if spec.tools:
+        sub.add_node(spec.tool_node, ToolNode(list(spec.tools)))
+
+        def route(state) -> str:
+            return spec.tool_node if state["messages"][-1].tool_calls else END
+
+        sub.add_conditional_edges(spec.agent_node, route, [spec.tool_node, END])
+        sub.add_edge(spec.tool_node, spec.agent_node)
+    else:
+        sub.add_edge(spec.agent_node, END)
+    # checkpointer=False: never inherit the parent's checkpointer
+    compiled = sub.compile(checkpointer=False)
+
+    def run(state, config) -> dict:
+        limit = (config or {}).get("recursion_limit", 100)
+        final = compiled.invoke(dict(state), {"recursion_limit": limit})
+        return {spec.report_key: final.get(spec.report_key, "")}
+
+    return run
+
+
 class GraphSetup:
     """Handles the setup and configuration of the agent graph."""
 
@@ -81,7 +113,7 @@ class GraphSetup:
         return self.deep_thinking_llm if deep else self.quick_thinking_llm
 
     def setup_graph(
-        self, selected_analysts=("market", "social", "news", "fundamentals")
+        self, selected_analysts=("market", "social", "news", "fundamentals"), parallel=False
     ):
         """Set up and compile the agent workflow graph.
 
@@ -92,6 +124,9 @@ class GraphSetup:
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
                 - "onchain" / "defi" / "funding": crypto analysts (Skopaq)
+            parallel (bool): Skopaq — run the analysts side by side, each with
+                private messages, and start the debate once all have reported.
+                The default runs them one after another, as upstream does.
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
@@ -122,11 +157,17 @@ class GraphSetup:
 
         workflow = StateGraph(AgentState)
 
-        for spec in plan.specs:
-            workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
-            workflow.add_node(spec.clear_node, create_msg_delete())
-            if spec.tools:
-                workflow.add_node(spec.tool_node, ToolNode(list(spec.tools)))
+        if parallel:
+            for spec in plan.specs:
+                workflow.add_node(
+                    spec.agent_node, _isolated_analyst(spec, analyst_factories[spec.key]())
+                )
+        else:
+            for spec in plan.specs:
+                workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
+                workflow.add_node(spec.clear_node, create_msg_delete())
+                if spec.tools:
+                    workflow.add_node(spec.tool_node, ToolNode(list(spec.tools)))
 
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
@@ -137,20 +178,14 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
-        workflow.add_edge(START, plan.specs[0].agent_node)
-
-        for i, spec in enumerate(plan.specs):
-            if spec.tools:
-                workflow.add_conditional_edges(
-                    spec.agent_node, _tools_or_clear(spec), [spec.tool_node, spec.clear_node]
-                )
-                workflow.add_edge(spec.tool_node, spec.agent_node)
-            else:
-                workflow.add_edge(spec.agent_node, spec.clear_node)
-
-            # The last analyst hands over to the research debate.
-            following = plan.specs[i + 1].agent_node if i < len(plan.specs) - 1 else "Bull Researcher"
-            workflow.add_edge(spec.clear_node, following)
+        if parallel:
+            # Fan out to every analyst; the debate starts once all have reported.
+            for spec in plan.specs:
+                workflow.add_edge(START, spec.agent_node)
+            workflow.add_edge([spec.agent_node for spec in plan.specs], "Bull Researcher")
+        else:
+            workflow.add_edge(START, plan.specs[0].agent_node)
+            self._chain_analysts(workflow, plan)
 
         # Both research-debate edges share the complete DEBATE_PATH_MAP (#1088).
         for debate_node in ("Bull Researcher", "Bear Researcher"):
@@ -172,3 +207,20 @@ class GraphSetup:
         workflow.add_edge("Portfolio Manager", END)
 
         return workflow
+
+    @staticmethod
+    def _chain_analysts(workflow, plan):
+        """Upstream's sequential analysts: each hands over to the next."""
+        for i, spec in enumerate(plan.specs):
+            if spec.tools:
+                workflow.add_conditional_edges(
+                    spec.agent_node, _tools_or_clear(spec), [spec.tool_node, spec.clear_node]
+                )
+                workflow.add_edge(spec.tool_node, spec.agent_node)
+            else:
+                workflow.add_edge(spec.agent_node, spec.clear_node)
+
+            # The last analyst hands over to the research debate.
+            last = i == len(plan.specs) - 1
+            following = "Bull Researcher" if last else plan.specs[i + 1].agent_node
+            workflow.add_edge(spec.clear_node, following)

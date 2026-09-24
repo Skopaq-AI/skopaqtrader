@@ -147,6 +147,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tool_vendors": {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
     },
+    # Skopaq: run the analysts side by side, each with private messages.
+    "parallel_analysts": False,
     # Skopaq: suffix route_to_vendor appends to bare symbols sent to yfinance.
     # Indian NSE stocks need ".NS" (RELIANCE -> RELIANCE.NS); empty for US.
     "yfinance_symbol_suffix": "",
