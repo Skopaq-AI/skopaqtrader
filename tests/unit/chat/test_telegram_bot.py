@@ -146,3 +146,4 @@ async def test_halt_and_resume_commands(allow, tmp_path, monkeypatch):
 
     await telegram_bot.cmd_resume(update, SimpleNamespace(args=[]))
     assert not kill_switch.status(use_cache=False).halted
+

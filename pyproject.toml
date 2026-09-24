@@ -54,6 +54,7 @@ dev = [
     "respx>=0.22.0",
     "ruff>=0.8.0",
     "python-telegram-bot>=21.0",  # tests/unit/chat/test_telegram_bot.py
+    "langchain-ollama>=1.0.0",  # Ollama fallback (SKOPAQ_OLLAMA_ENABLED), tests/unit/llm/test_ollama.py
 ]
 
 [project.scripts]

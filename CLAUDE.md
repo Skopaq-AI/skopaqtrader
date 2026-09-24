@@ -64,6 +64,10 @@ python3 -m pytest tests/unit/ -x -q
 # Run a specific test file
 python3 -m pytest tests/unit/execution/test_daemon.py -v
 
+# CI (.github/workflows/ci.yml) runs on every PR: unit tests on Python 3.11/3.12,
+# lint for syntax errors and undefined names (ruff --select E9,F63,F7,F82), and
+# upstream TradingAgents' own suite against our tradingagents/ (pinned UPSTREAM_REF)
+
 # Run integration tests (requires .env with real keys)
 python3 -m pytest tests/integration/ -v -m integration
 
