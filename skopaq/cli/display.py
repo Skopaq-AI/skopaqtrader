@@ -332,8 +332,11 @@ def display_scan_results(candidates: Sequence[ScannerCandidate]) -> None:
         padding=(0, 1),
         expand=True,
     )
+    scored = any("catalyst_score" in c.metrics for c in candidates)
     table.add_column("Symbol", style="bold cyan", width=14)
     table.add_column("Urgency", justify="center", width=10)
+    if scored:
+        table.add_column("Catalyst", justify="center", width=9)  # Jev, 0-3
     table.add_column("Reason", no_wrap=False, ratio=1)
 
     for c in candidates:
@@ -345,7 +348,11 @@ def display_scan_results(candidates: Sequence[ScannerCandidate]) -> None:
         else:
             urgency = f"[{WARNING}]NORMAL[/{WARNING}]"
 
-        table.add_row(c.symbol, urgency, c.reason)
+        row = [c.symbol, urgency]
+        if scored:
+            score = c.metrics.get("catalyst_score")
+            row.append("—" if score is None else f"{score:.1f}")
+        table.add_row(*row, c.reason)
 
     panel = Panel(
         table,

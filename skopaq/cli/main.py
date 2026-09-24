@@ -425,11 +425,13 @@ async def _run_scan(max_candidates: int):
     - llm_screener:   Gemini 3 Flash  (technical screening)
     - news_screener:  Perplexity Sonar (news-aware screening)
     - social_screener: Grok            (social sentiment screening)
+    - jev:            catalyst scoring of the candidates (when enabled)
     """
     from langchain_core.messages import HumanMessage
 
     from skopaq.config import SkopaqConfig
     from skopaq.llm import bridge_env_vars, build_llm_map, extract_text
+    from skopaq.llm.jev import get_jev
     from skopaq.scanner import ScannerEngine, Watchlist
 
     config = SkopaqConfig()
@@ -529,6 +531,7 @@ async def _run_scan(max_candidates: int):
         llm_screener=llm_screener,
         news_screener=news_screener,
         social_screener=social_screener,
+        jev=get_jev(),
     )
     return await scanner.scan_once()
 

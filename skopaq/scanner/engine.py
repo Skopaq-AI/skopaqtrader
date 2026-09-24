@@ -6,7 +6,9 @@ Multi-model scanning pipeline:
     3. Primary screen: Gemini Flash for technical candidate selection
     4. Optional: Perplexity Sonar for news-driven signals (parallel)
     5. Optional: Grok for social sentiment signals (parallel)
-    6. Merge and deduplicate candidates, push to asyncio.Queue
+    6. Merge and deduplicate candidates
+    7. Optional: Jev scores each candidate's reason; weak catalysts are
+       dropped and the rest ranked, before they reach the slow full analysis
 """
 
 from __future__ import annotations
@@ -48,6 +50,9 @@ class ScannerEngine:
             news-aware screening (Perplexity Sonar recommended).
         social_screener: Optional async callable ``(prompt) -> str`` for
             social sentiment screening (Grok recommended).
+        jev: Optional :class:`skopaq.llm.jev.Jev` that scores each
+            candidate's reason (``catalyst``) and sets the drop threshold
+            (``min_catalyst_score``).
     """
 
     def __init__(
@@ -59,6 +64,7 @@ class ScannerEngine:
         llm_screener: Optional[Callable] = None,
         news_screener: Optional[Callable] = None,
         social_screener: Optional[Callable] = None,
+        jev: Any = None,
     ) -> None:
         self.watchlist = watchlist or Watchlist()
         self.cycle_seconds = cycle_seconds
@@ -67,6 +73,7 @@ class ScannerEngine:
         self._llm_screener = llm_screener or self._default_llm_screener
         self._news_screener = news_screener
         self._social_screener = social_screener
+        self._jev = jev
         self.candidate_queue: asyncio.Queue[ScannerCandidate] = asyncio.Queue()
 
         # State
@@ -161,6 +168,9 @@ class ScannerEngine:
 
         # 4. Deduplicate (same symbol from multiple screeners)
         candidates = self._deduplicate(all_candidates)
+
+        # 5. Jev: drop weak catalysts, rank the rest
+        candidates = await self._score_catalysts(candidates)
         self._last_candidates = candidates
 
         logger.info(
@@ -281,6 +291,48 @@ class ScannerEngine:
 
         return merged
 
+    async def _score_catalysts(
+        self, candidates: list[ScannerCandidate],
+    ) -> list[ScannerCandidate]:
+        """Score each candidate's reason with Jev; drop weak ones and rank the rest.
+
+        A candidate Jev could not score is kept and ranked as if it scored
+        exactly the threshold, so a Jev outage changes nothing.
+        """
+        if self._jev is None or not candidates:
+            return candidates
+
+        threshold = self._jev.min_catalyst_score
+        scores = await asyncio.gather(
+            *(self._jev.catalyst(c.symbol, c.reason) for c in candidates),
+            return_exceptions=True,
+        )
+
+        kept: list[ScannerCandidate] = []
+        for candidate, score in zip(candidates, scores):
+            if score is None or isinstance(score, BaseException):
+                kept.append(candidate)
+                continue
+            candidate.metrics["catalyst_score"] = round(score.score, 2)
+            candidate.metrics["catalyst_confidence"] = round(score.confidence, 2)
+            candidate.metrics["specific_news"] = round(score.specific_news, 2)
+            if score.score < threshold:
+                logger.info(
+                    "Jev dropped %s: catalyst %.2f < %.2f (%s)",
+                    candidate.symbol, score.score, threshold, candidate.reason,
+                )
+                continue
+            kept.append(candidate)
+
+        # Multi-source first (as _deduplicate does), then catalyst strength,
+        # then named company news.  sort() is stable, so ties keep their order.
+        kept.sort(key=lambda c: (
+            -c.metrics.get("source_count", 1),
+            -c.metrics.get("catalyst_score", threshold),
+            -c.metrics.get("specific_news", 0.0),
+        ))
+        return kept
+
     @staticmethod
     def _compute_metrics(quotes: list[dict]) -> list[ScannerMetrics]:
         """Compute scanner metrics from raw quote dicts."""
@@ -315,7 +367,7 @@ class ScannerEngine:
             active.append("news")
         if self._social_screener:
             active.append("social")
-        return {"active": active, "count": len(active)}
+        return {"active": active, "count": len(active), "jev": self._jev is not None}
 
     # ── Default stubs ─────────────────────────────────────────────────
 
