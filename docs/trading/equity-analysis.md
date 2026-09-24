@@ -10,10 +10,10 @@ The pipeline is structured in 7 phases. Each agent has a specific role and persp
 
 | Agent | Provider | What It Analyzes |
 |-------|----------|-----------------|
-| Market Analyst | Gemini 3 Flash Preview | OHLCV data, RSI, MACD, Bollinger Bands, SMA, EMA, ATR, VWMA |
-| Social Analyst | Grok 3 Mini (OpenRouter) | Social media sentiment, public discussion |
-| News Analyst | Gemini 3 Flash | Company news, global macro, insider transactions |
-| Fundamentals Analyst | Gemini 3 Flash Preview | Balance sheet, cash flow, income statement, company profile |
+| Market Analyst | Gemini 3.8 Flash | OHLCV data, RSI, MACD, Bollinger Bands, SMA, EMA, ATR, VWMA |
+| Social Analyst | Grok 4.6 (OpenRouter) | Social media sentiment, public discussion |
+| News Analyst | Gemini 3.8 Flash | Company news, global macro, insider transactions |
+| Fundamentals Analyst | Gemini 3.8 Flash | Balance sheet, cash flow, income statement, company profile |
 
 ### Phase 2: Investment Debate (2 agents)
 
@@ -26,7 +26,7 @@ Each researcher references all four analyst reports and counters the other's arg
 
 ### Phase 3: Research Manager (1 agent)
 
-The **Research Manager** (Claude Opus 4.6) acts as judge. It evaluates the bull/bear debate and makes a decisive BUY/SELL/HOLD recommendation. This role uses the strongest reasoning model because the decision quality matters most here.
+The **Research Manager** (Claude Opus 5) acts as judge. It evaluates the bull/bear debate and makes a decisive BUY/SELL/HOLD recommendation. This role uses the strongest reasoning model because the decision quality matters most here.
 
 ### Phase 4: Trader (1 agent)
 
@@ -42,7 +42,7 @@ Translates the research manager's investment plan into a concrete trade proposal
 
 ### Phase 6: Risk Manager (1 agent)
 
-The **Risk Manager** (Claude Opus 4.6) evaluates the three-way risk debate and produces the final verdict. It outputs:
+The **Risk Manager** (Claude Opus 5) evaluates the three-way risk debate and produces the final verdict. It outputs:
 
 - Clear BUY/SELL/HOLD recommendation
 - Confidence score (0-100)

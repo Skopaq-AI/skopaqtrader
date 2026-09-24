@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
     # --- Upstream TradingAgents deps (v0.5.1) ---
     "langchain-core>=0.3.81",
-    "langchain-anthropic>=0.3.15",
+    # Skopaq: 1.7.4 knows claude-opus-5 (128K output; older versions cap unknown
+    # models at 4096 tokens, which adaptive thinking can use up).
+    "langchain-anthropic>=1.7.4",
     "langchain-google-genai>=4.0.0",
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
@@ -41,6 +43,7 @@ dependencies = [
     "langcache>=0.11.1",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
+    "mcp>=1.2,<2",  # skopaq/mcp_server.py; 2.x drops mcp.server.FastMCP
 ]
 
 [project.optional-dependencies]

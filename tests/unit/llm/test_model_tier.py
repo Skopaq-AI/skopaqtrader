@@ -54,6 +54,21 @@ class TestBuildLlmMap:
         assert llm_map["market_analyst"]._provider == "google"
         assert "_default" in llm_map
 
+        assert llm_map["portfolio_manager"]._model == "claude-opus-5"
+        assert llm_map["research_manager"]._model == "claude-opus-5"
+        assert llm_map["social_analyst"]._model == "x-ai/grok-4.6"
+        assert llm_map["market_analyst"]._model == "gemini-3.8-flash"
+        assert llm_map["_default"]._model == "gemini-3.8-flash"
+
+    def test_judges_avoid_models_that_reject_forced_tool_calls(self):
+        """LangChain's structured output forces a tool call on Anthropic models;
+        Opus 5.5 and Fable 5.1 answer that with a 400."""
+        from skopaq.llm.model_tier import _ROLE_PREFERENCES
+
+        for role in ("research_manager", "portfolio_manager"):
+            for provider, model in _ROLE_PREFERENCES[role]:
+                assert not model.startswith(("claude-opus-5-5", "claude-fable-5-1"))
+
     @patch("skopaq.llm.model_tier._create_llm")
     def test_only_google_key(self, mock_create):
         """When only Google key is set, all roles fall back to Gemini Flash."""

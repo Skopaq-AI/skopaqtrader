@@ -87,12 +87,12 @@ skopaq serve               # FastAPI server
 
 | Role | Model | Provider |
 |------|-------|----------|
-| Most analyst/researcher roles | Gemini 3 Flash Preview | Google |
-| Social Analyst | Grok 3 Mini | OpenRouter (`x-ai/grok-3-mini`) |
-| News Analyst | Gemini 3 Flash | Google |
-| Research Manager, Portfolio Manager | Claude Opus 4.6 | Anthropic |
+| Most analyst/researcher roles | Gemini 3.8 Flash | Google |
+| Social Analyst | Grok 4.6 | OpenRouter (`x-ai/grok-4.6`) |
+| News Analyst | Gemini 3.8 Flash | Google |
+| Research Manager, Portfolio Manager | Claude Opus 5 | Anthropic |
 | Scanner screeners | Gemini + Grok + Perplexity Sonar | Concurrent |
-| Sell Analyst | Gemini 3 Flash | Google |
+| Sell Analyst | Gemini 3.8 Flash | Google |
 
 **Memory:** upstream keeps an append-only decision log (`TradingMemoryLog`), settled once each decision's holding window has traded; `skopaq/memory/store.py` mirrors it to Supabase. `SKOPAQ_TYPESAFE_API_KEY` enables upstream's TypeSafe Jev screening of social posts.
 

@@ -72,7 +72,7 @@ The debate runs for `max_debate_rounds` rounds (configurable, default 1).
 
 ### Phase 4: Research Manager
 
-The judge role (Claude Opus 4.6) evaluates the debate and makes a definitive decision. It is instructed to NOT default to HOLD -- it must commit to a stance backed by the strongest arguments.
+The judge role (Claude Opus 5) evaluates the debate and makes a definitive decision. It is instructed to NOT default to HOLD -- it must commit to a stance backed by the strongest arguments.
 
 ### Phase 5: Trader
 
@@ -90,7 +90,7 @@ The debate runs for `max_risk_discuss_rounds` rounds (configurable, default 1).
 
 ### Phase 7: Risk Manager
 
-The final judge (Claude Opus 4.6) produces the ultimate decision with:
+The final judge (Claude Opus 5) produces the ultimate decision with:
 
 - BUY/SELL/HOLD recommendation
 - Confidence score (0-100)
@@ -100,15 +100,15 @@ The final judge (Claude Opus 4.6) produces the ultimate decision with:
 
 | Agent | Provider | Model | Why |
 |-------|----------|-------|-----|
-| Market Analyst | Google | gemini-3-flash-preview | Fast, cost-effective for data analysis |
-| Social Analyst | OpenRouter | x-ai/grok-3-mini | Strong at social sentiment |
-| News Analyst | Google | gemini-3-flash-preview | Handles news well |
-| Fundamentals Analyst | Google | gemini-3-flash-preview | Good with financial data |
-| Bull/Bear Researchers | Google | gemini-3-flash-preview | Fast for debate |
-| Research Manager | Anthropic | claude-opus-4-6 | Strongest reasoning for judge role |
-| Trader | Google | gemini-3-flash-preview | Action-oriented |
-| Risk Debaters (3) | Google | gemini-3-flash-preview | Fast for multi-round debate |
-| Risk Manager | Anthropic | claude-opus-4-6 | Strongest reasoning for final decision |
+| Market Analyst | Google | gemini-3.8-flash | Fast, cost-effective for data analysis |
+| Social Analyst | OpenRouter | x-ai/grok-4.6 | Strong at social sentiment |
+| News Analyst | Google | gemini-3.8-flash | Handles news well |
+| Fundamentals Analyst | Google | gemini-3.8-flash | Good with financial data |
+| Bull/Bear Researchers | Google | gemini-3.8-flash | Fast for debate |
+| Research Manager | Anthropic | claude-opus-5 | Strongest reasoning for judge role |
+| Trader | Google | gemini-3.8-flash | Action-oriented |
+| Risk Debaters (3) | Google | gemini-3.8-flash | Fast for multi-round debate |
+| Risk Manager | Anthropic | claude-opus-5 | Strongest reasoning for final decision |
 
 Model assignments are configured in `skopaq/llm/model_tier.py`. Each role has a fallback chain -- if the primary provider is unavailable, it falls back to the next option.
 
