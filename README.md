@@ -44,7 +44,7 @@ SkopaqTrader extends the [TradingAgents](https://github.com/TauricResearch/Tradi
 - **Semantic LLM Caching** — Built-in Redis LangCache provides significant speedup (up to ~45x in our benchmarks) on repeated queries and reduces API costs, with automatic semantic invalidation on memory updates.
 - **Advanced Risk Management** — Features ATR-based position sizing, India VIX/NIFTY SMA market regime detection, NSE event calendar handling (F&O expiry, RBI policy), and sector concentration limits.
 - **Live Algo Trading** — Integrates with the INDstocks broker API for execution on Indian equities (NSE/BSE). Start in paper mode, graduate to live when ready.
-- **Confidence-Scored Position Sizing** — The Risk Manager evaluates trades with strict confidence scores (50-100%). Position sizes are dynamically scaled based on this AI confidence level.
+- **Confidence-Scored Position Sizing** — The Portfolio Manager evaluates trades with strict confidence scores (50-100%). Position sizes are dynamically scaled based on this AI confidence level.
 - **Parallel Scanner Engine** — 30-second multi-model screening cycle on the NIFTY 50 watchlist, wired directly to INDstocks batch quotes and 3 LLM screeners (Gemini, Grok, Perplexity) running concurrently.
 - **Safety-First Execution** — Immutable position limits, persistent drawdown tracking, daily loss circuit breakers, and small-account exemptions.
 - **Autonomous Trading Daemon** — Full session orchestrator: PRE_OPEN → SCANNING → ANALYZING → TRADING → MONITORING → CLOSING → REPORTING. Runs unattended on a cron schedule with graceful SIGTERM handling and tighter safety rules.
@@ -82,7 +82,7 @@ graph TD
         Orchestrator["SkopaqTradingGraph<br/>System Orchestrator"]:::core
         DataAgents["Data Analysts<br/>Market / News / Social"]:::agent
         ResearchAgents["Researchers<br/>Bull / Bear / Debate"]:::agent
-        RiskAgent["Risk Manager<br/>Evaluation"]:::agent
+        RiskAgent["Portfolio Manager<br/>Evaluation"]:::agent
         TraderAgent["Trader Agent<br/>Decision"]:::agent
     end
 
@@ -129,7 +129,7 @@ sequenceDiagram
     participant Orch as Orchestrator
     participant Analysts as Analyst Agents
     participant Research as Researchers
-    participant Risk as Risk Manager
+    participant Risk as Portfolio Manager
     participant Trader as Trader Agent
     participant Broker as INDstocks Broker
 
@@ -240,7 +240,7 @@ flowchart TD
 | Social Analyst | Grok 3 Mini (via OpenRouter) | Gemini 3 Flash | Ollama (auto) |
 | News Analyst | Gemini 3 Flash | — | Ollama (auto) |
 | Research Manager | Claude Opus 4.6 | Gemini 3 Flash | — (quality critical) |
-| Risk Manager | Claude Opus 4.6 | Gemini 3 Flash | — (quality critical) |
+| Portfolio Manager | Claude Opus 4.6 | Gemini 3 Flash | — (quality critical) |
 | Chat Brain | Claude Opus 4.6 | Gemini 3 Flash | Ollama (auto) |
 | Bull / Bear / Debate Researchers | Gemini 3 Flash | — | Ollama (auto) |
 | Trader | Gemini 3 Flash | — | Ollama (auto) |
@@ -249,7 +249,7 @@ flowchart TD
 
 > **Note:** Perplexity Sonar is used only in the scanner (plain prompts). It does not support tool calling, so it cannot serve as an analyst in the LangGraph agent pipeline.
 >
-> **Ollama fallback** activates only when `SKOPAQ_OLLAMA_ENABLED=true` and Ollama is running locally. Judge roles (Research Manager, Risk Manager) never fall back to local models.
+> **Ollama fallback** activates only when `SKOPAQ_OLLAMA_ENABLED=true` and Ollama is running locally. Judge roles (Research Manager, Portfolio Manager) never fall back to local models.
 
 ### Blockchain Infrastructure
 
@@ -492,7 +492,7 @@ SkopaqTrader has two execution paths for the same multi-agent pipeline:
 │    → Research Manager call (Claude Opus API)            │
 │    → Trader call (Gemini Flash)                         │
 │    → 3 risk debater calls (Gemini Flash)                │
-│    → Risk Manager call (Claude Opus API)                │
+│    → Portfolio Manager call (Claude Opus API)           │
 │                                                         │
 │  Uses: Separate API calls to Gemini/Claude/Grok         │
 │  Cost: ~$0.20-0.50 per analysis                         │
@@ -516,7 +516,7 @@ export SKOPAQ_OLLAMA_ENABLED=true
 skopaq chat            # Uses local model as fallback when cloud APIs fail
 ```
 
-Local models serve as the **last fallback** in the provider chain. Judge roles (research_manager, risk_manager) skip local models to preserve reasoning quality.
+Local models serve as the **last fallback** in the provider chain. Judge roles (research_manager, portfolio_manager) skip local models to preserve reasoning quality.
 
 ### OpenClaw Integration
 
@@ -539,7 +539,7 @@ print(decision)
 
 ```
 skopaqtrader/
-├── tradingagents/              # Vendored upstream (TradingAgents v0.2.0)
+├── tradingagents/              # Vendored upstream (TradingAgents v0.5.1)
 │   ├── agents/                 # Analyst, researcher, trader, risk agents
 │   │   ├── analysts/           # Market, news, social, fundamentals + crypto analysts
 │   │   ├── researchers/        # Bull/bear researchers
@@ -682,20 +682,19 @@ docker compose up -d   # Starts API + Telegram bot
 
 ## Upstream Modifications
 
-All 34 changes to the vendored `tradingagents/` directory are documented in [`UPSTREAM_CHANGES.md`](UPSTREAM_CHANGES.md).
+The vendored `tradingagents/` directory is upstream v0.5.1 (commit `f58a585`) plus the changes documented in [`UPSTREAM_CHANGES.md`](UPSTREAM_CHANGES.md), each marked `Skopaq:` in the source.
 
 **Modification philosophy:** Minimal, surgical changes. The upstream graph runs as a black box via `propagate()`. Skopaq wraps it with execution, safety, and multi-model tiering.
 
 **Categories of modifications:**
 
 - **Multi-model tiering** — `llm_map` support in `graph/setup.py` and `trading_graph.py`
-- **INDstocks data vendor** — New `dataflows/indstocks.py` + registration in `interface.py`
-- **Parallel analyst execution** — State reducers in `agent_states.py`, fan-out wiring in `setup.py`
-- **Crypto analyst agents** — 7 new files (on-chain, DeFi, funding) + 9 modified debate consumers
-- **Confidence scoring** — Risk manager prompt addition for structured confidence output
-- **Bugfixes** — yfinance symbol suffix handling, comma-separated indicator splitting, `.NS`/`.BO` stripping
+- **INDstocks data vendor** — `dataflows/vendors/indstocks.py` + registration in `dataflows/router.py`
+- **yfinance symbol suffix** — `.NS` appended to bare NSE symbols routed to yfinance
+- **Crypto analyst agents** — on-chain, DeFi and funding analysts + their reports in the debates
+- **Confidence scoring** — optional `confidence` field on the Portfolio Manager's structured decision
 
-**Diff command:** `git diff upstream-v0.2.0..HEAD -- tradingagents/`
+See `UPSTREAM_CHANGES.md` for the diff command and the steps for the next upstream sync.
 
 ## Contributing
 

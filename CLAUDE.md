@@ -4,13 +4,13 @@ This file provides context for AI coding agents working on the SkopaqTrader code
 
 ## Project Overview
 
-AI algorithmic trading platform for Indian equities. Built on vendored [TradingAgents v0.2.0](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) with a custom `skopaq/` layer for INDstocks broker integration, multi-model LLM tiering, and an autonomous execution pipeline.
+AI algorithmic trading platform for Indian equities. Built on vendored [TradingAgents v0.5.1](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) with a custom `skopaq/` layer for INDstocks broker integration, multi-model LLM tiering, and an autonomous execution pipeline.
 
 ## Architecture
 
 Two codebases in one repo:
 
-- **`tradingagents/`** — Vendored upstream. Multi-agent LangGraph pipeline: 4 analysts → bull/bear researchers → risk debate → trader decision. Modifications are surgical and tracked in `UPSTREAM_CHANGES.md`.
+- **`tradingagents/`** — Vendored upstream. Multi-agent LangGraph pipeline: 4 analysts → bull/bear researchers → trader → risk debate → Portfolio Manager decision (5-tier rating: Buy/Overweight/Hold/Underweight/Sell). Modifications are surgical and tracked in `UPSTREAM_CHANGES.md`.
 - **`skopaq/`** — Custom extensions: broker client, execution pipeline, CLI, config, LLM tiering, scanner, risk management, memory, daemon.
 
 ### Key Flow
@@ -56,7 +56,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 11 
 ## Common Commands
 
 ```bash
-# Run unit tests (540 tests, no API keys needed)
+# Run unit tests (575 tests, no API keys needed)
 python3 -m pytest tests/unit/ -x -q
 
 # Run a specific test file
@@ -90,9 +90,11 @@ skopaq serve               # FastAPI server
 | Most analyst/researcher roles | Gemini 3 Flash Preview | Google |
 | Social Analyst | Grok 3 Mini | OpenRouter (`x-ai/grok-3-mini`) |
 | News Analyst | Gemini 3 Flash | Google |
-| Research Manager, Risk Manager | Claude Opus 4.6 | Anthropic |
+| Research Manager, Portfolio Manager | Claude Opus 4.6 | Anthropic |
 | Scanner screeners | Gemini + Grok + Perplexity Sonar | Concurrent |
 | Sell Analyst | Gemini 3 Flash | Google |
+
+**Memory:** upstream keeps an append-only decision log (`TradingMemoryLog`), settled once each decision's holding window has traded; `skopaq/memory/store.py` mirrors it to Supabase. `SKOPAQ_TYPESAFE_API_KEY` enables upstream's TypeSafe Jev screening of social posts.
 
 **Critical:** Perplexity Sonar does NOT support tool calling — it can only be used for scanner plain prompts, never as a LangGraph agent.
 
