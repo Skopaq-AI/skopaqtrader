@@ -293,6 +293,8 @@ async def analyze_stock(symbol: str, date: str = "") -> str:
     safety = SafetyChecker(
         max_sector_concentration_pct=config.max_sector_concentration_pct
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
     executor = Executor(router, safety)
 
     llm_map = build_llm_map()
@@ -441,6 +443,9 @@ async def check_safety(
     from skopaq.execution.safety_checker import SafetyChecker
 
     safety = SafetyChecker(rules=PAPER_SAFETY_RULES)
+    config = _get_config()
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
 
     order = OrderRequest(
         symbol=symbol,
@@ -540,6 +545,8 @@ async def place_order(
         rules=rules,
         max_sector_concentration_pct=config.max_sector_concentration_pct,
     )
+    from skopaq.execution.pnl_history import seed_safety_checker
+    seed_safety_checker(safety, config)
 
     # Inject a quote for paper fill simulation
     if config.trading_mode == "paper" and price > 0:

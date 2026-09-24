@@ -488,3 +488,20 @@ class TestFormatReturns:
 
         assert "Symbol: WIPRO" in result
         assert "Entry Price: None" in result
+
+
+class TestRecordingWithoutReflection:
+    """graph=None: the position is still closed with its P&L, nothing reflects."""
+
+    @pytest.mark.asyncio
+    async def test_closes_buy_with_pnl_and_skips_reflection(self, trade_repo):
+        buy = _make_open_buy_record(quantity=10)
+        trade_repo.find_open_buy.return_value = buy
+
+        await TradeLifecycleManager(trade_repo, None).on_trade(
+            _make_sell_result(fill_price=2400.0))
+
+        trade_id, fields = trade_repo.update.call_args_list[0].args
+        assert trade_id == buy.id
+        assert fields["pnl"] == "-1000.00"
+        assert "closed_at" in fields

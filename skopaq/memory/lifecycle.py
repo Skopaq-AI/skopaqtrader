@@ -32,14 +32,15 @@ class TradeLifecycleManager:
 
     Args:
         trade_repo: Repository for trade CRUD (find_open_buy, update).
-        graph: The Skopaq trading graph (for calling reflect()).
+        graph: The Skopaq trading graph (for calling reflect()); ``None``
+            records the trade and its P&L without a reflection.
         memory_store: Persistence layer for agent memories.
     """
 
     def __init__(
         self,
         trade_repo: TradeRepository,
-        graph: SkopaqTradingGraph,
+        graph: Optional[SkopaqTradingGraph],
         memory_store: Optional[MemoryStore] = None,
     ) -> None:
         self._trade_repo = trade_repo
@@ -166,6 +167,9 @@ class TradeLifecycleManager:
                 logger.warning("Failed to link SELL to BUY", exc_info=True)
         else:
             logger.debug("No trade_id on result — SELL/BUY linkage skipped")
+
+        if self._graph is None:
+            return  # recording only (reflection off, or no graph built)
 
         # Trigger reflection with P&L outcome
         returns_losses = _format_returns(symbol, pnl, pnl_pct, buy_price, sell_price)

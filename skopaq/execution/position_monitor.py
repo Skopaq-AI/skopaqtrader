@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from skopaq.agents.sell_analyst import SellDecision, analyze_exit
 from skopaq.broker.models import TradingSignal
@@ -86,8 +86,12 @@ class PositionMonitor:
         llm=None,
         stop_event: Optional[asyncio.Event] = None,
         ai_enabled: bool = True,
+        on_exit: Optional[Callable[[TradingSignal, Any], Awaitable[None]]] = None,
     ):
+        """``on_exit(signal, execution)`` is awaited after each successful sell,
+        e.g. to persist it; its failures are logged, never raised."""
         self._executor = executor
+        self._on_exit = on_exit
         self._client = client
         self._router = router
         self._config = config
@@ -312,6 +316,14 @@ class PositionMonitor:
 
     # ── Execution ────────────────────────────────────────────────────────
 
+    async def _record_exit(self, signal: TradingSignal, exec_result: Any) -> None:
+        if self._on_exit is None:
+            return
+        try:
+            await self._on_exit(signal, exec_result)
+        except Exception:
+            logger.warning("Recording the exit of %s failed", signal.symbol, exc_info=True)
+
     async def _execute_sell(
         self,
         pos: MonitoredPosition,
@@ -352,6 +364,7 @@ class PositionMonitor:
             exec_result = await self._executor.execute_signal(signal)
 
             if exec_result.success:
+                await self._record_exit(signal, exec_result)
                 pnl = (ltp - pos.entry_price) * pos.quantity
                 result.sells_executed += 1
                 result.total_pnl += pnl
