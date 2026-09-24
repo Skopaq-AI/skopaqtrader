@@ -23,6 +23,7 @@ _BRIDGE_MAP: dict[str, str] = {
     "xai_api_key": "XAI_API_KEY",
     "perplexity_api_key": "PERPLEXITY_API_KEY",
     "openrouter_api_key": "OPENROUTER_API_KEY",
+    "typesafe_api_key": "TYPESAFE_API_KEY",
 }
 
 

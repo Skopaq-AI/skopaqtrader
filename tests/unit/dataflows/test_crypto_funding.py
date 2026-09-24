@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tradingagents.dataflows.crypto_funding import (
+from tradingagents.dataflows.vendors.crypto_funding import (
     get_funding_rates,
     get_open_interest,
     get_long_short_ratio,
@@ -50,7 +50,7 @@ def _mock_get_success(json_data, status_code=200):
 
 
 class TestGetFundingRates:
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_funding_rates_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_FUNDING_RATES)
 
@@ -61,7 +61,7 @@ class TestGetFundingRates:
         # Should contain funding rate data
         assert "0.0001" in result or "funding" in result.lower()
 
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Connection timeout")
 
@@ -72,7 +72,7 @@ class TestGetFundingRates:
 
 
 class TestGetOpenInterest:
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_open_interest_success(self, mock_get):
         # get_open_interest makes 2 calls: current OI + OI history
         mock_get.side_effect = [
@@ -86,7 +86,7 @@ class TestGetOpenInterest:
         assert "85000" in result or "85,000" in result
         assert len(result) > 20
 
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Rate limited")
 
@@ -96,7 +96,7 @@ class TestGetOpenInterest:
 
 
 class TestGetLongShortRatio:
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_ratio_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_LONG_SHORT_RATIO)
 
@@ -105,7 +105,7 @@ class TestGetLongShortRatio:
         assert isinstance(result, str)
         assert len(result) > 20
 
-    @patch("tradingagents.dataflows.crypto_funding.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_funding.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Connection refused")
 

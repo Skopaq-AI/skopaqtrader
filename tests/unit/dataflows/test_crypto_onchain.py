@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tradingagents.dataflows.crypto_onchain import (
+from tradingagents.dataflows.vendors.crypto_onchain import (
     get_blockchain_stats,
     get_address_activity,
     CHAIN_MAP,
@@ -75,7 +75,7 @@ class TestChainMap:
 
 
 class TestGetBlockchainStats:
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_btc_stats_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_BLOCKCHAIR_STATS)
 
@@ -86,7 +86,7 @@ class TestGetBlockchainStats:
         assert "67500" in result or "67,500" in result  # market_price
         mock_get.assert_called()
 
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_eth_stats_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_BLOCKCHAIR_STATS)
 
@@ -95,7 +95,7 @@ class TestGetBlockchainStats:
         assert isinstance(result, str)
         assert len(result) > 50  # Meaningful content
 
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Connection timeout")
 
@@ -103,7 +103,7 @@ class TestGetBlockchainStats:
 
         assert "failed" in result.lower() or "error" in result.lower()
 
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_unknown_chain_handled(self, mock_get):
         """Coins not in CHAIN_MAP should still return a graceful message."""
         result = get_blockchain_stats("UNKNOWNCOIN")
@@ -112,7 +112,7 @@ class TestGetBlockchainStats:
 
 
 class TestGetAddressActivity:
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_btc_activity_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_BLOCKCHAIR_STATS)
 
@@ -121,7 +121,7 @@ class TestGetAddressActivity:
         assert isinstance(result, str)
         assert len(result) > 20
 
-    @patch("tradingagents.dataflows.crypto_onchain.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_onchain.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("API down")
 

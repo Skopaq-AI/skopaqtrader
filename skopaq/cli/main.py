@@ -847,7 +847,6 @@ def _build_upstream_config(config) -> dict:
     is_crypto = config.asset_class == "crypto"
 
     upstream = {
-        "project_dir": project_dir,
         "results_dir": str(Path(project_dir) / "results"),
         "data_cache_dir": str(Path(project_dir) / ".cache" / "data"),
         "llm_provider": "google",  # Default to Gemini (cheapest)
@@ -861,7 +860,7 @@ def _build_upstream_config(config) -> dict:
         "asset_class": config.asset_class,
         # Data vendor routing — crypto uses yfinance everywhere (no INDstocks)
         "data_vendors": {
-            "core_stock_apis": "yfinance" if is_crypto else "indstocks",
+            "core_stock_apis": "yfinance" if is_crypto else "indstocks,yfinance",
             "technical_indicators": "yfinance",
             "fundamental_data": "yfinance",
             "news_data": "yfinance",

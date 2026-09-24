@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tradingagents.dataflows.crypto_defi import (
+from tradingagents.dataflows.vendors.crypto_defi import (
     get_token_fundamentals,
     get_defi_tvl,
     get_chain_tvl_overview,
@@ -84,7 +84,7 @@ class TestDefiLlamaProtocolMap:
 
 
 class TestGetTokenFundamentals:
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_btc_fundamentals_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_COINGECKO_RESPONSE)
 
@@ -94,7 +94,7 @@ class TestGetTokenFundamentals:
         assert "67500" in result or "67,500" in result
         assert len(result) > 50
 
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Rate limited")
 
@@ -103,7 +103,7 @@ class TestGetTokenFundamentals:
         assert isinstance(result, str)
         assert "failed" in result.lower() or "error" in result.lower()
 
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_unknown_coin_handled(self, mock_get):
         result = get_token_fundamentals("UNKNOWNCOIN")
 
@@ -111,7 +111,7 @@ class TestGetTokenFundamentals:
 
 
 class TestGetDefiTvl:
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_protocol_tvl_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_DEFILLAMA_PROTOCOL)
 
@@ -120,7 +120,7 @@ class TestGetDefiTvl:
         assert isinstance(result, str)
         assert len(result) > 20
 
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Not found")
 
@@ -130,7 +130,7 @@ class TestGetDefiTvl:
 
 
 class TestGetChainTvlOverview:
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_chain_overview_success(self, mock_get):
         mock_get.return_value = _mock_get_success(MOCK_DEFILLAMA_CHAINS)
 
@@ -139,7 +139,7 @@ class TestGetChainTvlOverview:
         assert isinstance(result, str)
         assert "Ethereum" in result
 
-    @patch("tradingagents.dataflows.crypto_defi.httpx.get")
+    @patch("tradingagents.dataflows.vendors.crypto_defi.httpx.get")
     def test_api_error_returns_error_string(self, mock_get):
         mock_get.side_effect = Exception("Connection refused")
 

@@ -182,3 +182,96 @@ class TestEstimateAgreement:
             "SELL now",
             "SELL please",
         ) == 0.6
+
+
+# ── Upstream v0.5.1 decision format ─────────────────────────────────────────
+
+
+class TestUpstreamRenderedConfidence:
+    """Upstream's Portfolio Manager renders "**Confidence**: N" (markdown bold)."""
+
+    def test_markdown_bold(self):
+        risk_state = {"judge_decision": "**Rating**: Buy\n\n**Confidence**: 71"}
+        assert _extract_confidence(risk_state) == 71
+
+    def test_not_provided_falls_back(self):
+        risk_state = {"judge_decision": "**Rating**: Buy\n\n**Confidence**: not provided"}
+        assert _extract_confidence(risk_state) == 50
+
+
+class TestRatingToAction:
+    @pytest.mark.parametrize("rating,action", [
+        ("Buy", "BUY"),
+        ("Overweight", "BUY"),
+        ("Hold", "HOLD"),
+        ("Underweight", "SELL"),
+        ("Sell", "SELL"),
+        ("REVIEW", "HOLD"),
+        ("", "HOLD"),
+        ("SELLING PRESSURE", "HOLD"),
+    ])
+    def test_mapping(self, rating, action):
+        from skopaq.graph.skopaq_graph import _rating_to_action
+
+        assert _rating_to_action(rating) == action
+
+
+class TestSkopaqGraphUpstreamCalls:
+    """How SkopaqTradingGraph drives the upstream graph."""
+
+    def _graph(self, config, memory_store=None):
+        from unittest.mock import MagicMock
+
+        from skopaq.graph.skopaq_graph import SkopaqTradingGraph
+
+        graph = SkopaqTradingGraph(config, MagicMock(), memory_store=memory_store)
+        upstream = MagicMock()
+        upstream.propagate.return_value = (
+            {"risk_debate_state": {"judge_decision": "**Rating**: Overweight\n**Confidence**: 64"}},
+            "Overweight",
+        )
+        graph._graph = upstream
+        return graph, upstream
+
+    @pytest.mark.asyncio
+    async def test_equity_symbol_gets_nse_suffix(self):
+        graph, upstream = self._graph({"yfinance_symbol_suffix": ".NS"})
+        result = await graph.analyze("RELIANCE", "2026-09-24")
+
+        upstream.propagate.assert_called_once_with("RELIANCE.NS", "2026-09-24", asset_type="stock")
+        assert result.signal.symbol == "RELIANCE"
+        assert result.signal.action == "BUY"
+        assert result.signal.confidence == 64
+
+    @pytest.mark.asyncio
+    async def test_crypto_symbol_passed_as_is(self):
+        graph, upstream = self._graph({"asset_class": "crypto", "yfinance_symbol_suffix": ""})
+        await graph.analyze("BTC-USD", "2026-09-24")
+
+        upstream.propagate.assert_called_once_with("BTC-USD", "2026-09-24", asset_type="crypto")
+
+    @pytest.mark.asyncio
+    async def test_decision_log_saved_after_analysis(self):
+        from unittest.mock import MagicMock
+
+        store = MagicMock()
+        graph, upstream = self._graph({"yfinance_symbol_suffix": ".NS"}, memory_store=store)
+        await graph.analyze("TCS", "2026-09-24")
+
+        store.save.assert_called_once_with(upstream)
+
+    def test_reflect_settles_symbol(self):
+        from unittest.mock import MagicMock
+
+        store = MagicMock()
+        graph, upstream = self._graph({"yfinance_symbol_suffix": ".NS"}, memory_store=store)
+        graph.reflect("Realized P&L: 120 INR", symbol="INFY")
+
+        upstream.settle_pending.assert_called_once_with("INFY.NS")
+        store.save.assert_called_once_with(upstream)
+
+    def test_reflect_without_symbol_is_noop(self):
+        graph, upstream = self._graph({})
+        graph.reflect("Realized P&L: 120 INR")
+
+        upstream.settle_pending.assert_not_called()

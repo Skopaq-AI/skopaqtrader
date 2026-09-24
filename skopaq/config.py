@@ -47,6 +47,7 @@ class SkopaqConfig(BaseSettings):
     perplexity_api_key: SecretStr = SecretStr("")  # Sonar (news)
     xai_api_key: SecretStr = SecretStr("")  # Grok (sentiment)
     openrouter_api_key: SecretStr = SecretStr("")  # OpenRouter (Grok + Perplexity)
+    typesafe_api_key: SecretStr = SecretStr("")  # TypeSafe Jev (social post screening)
 
     # ── Cloudflare Tunnel ───────────────────────────────────────────────
     cf_tunnel_id: str = ""

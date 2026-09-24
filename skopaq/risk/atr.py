@@ -38,7 +38,7 @@ def fetch_atr(
         Latest ATR value as a float, or None if unavailable.
     """
     try:
-        from tradingagents.dataflows.interface import route_to_vendor
+        from tradingagents.dataflows.router import route_to_vendor
 
         result = route_to_vendor(
             "get_indicators",

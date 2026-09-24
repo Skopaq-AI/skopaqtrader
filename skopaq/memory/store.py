@@ -1,20 +1,27 @@
 """Persistent agent memory backed by Supabase.
 
-Serializes / deserializes the in-memory BM25 ``FinancialSituationMemory``
-objects to a Supabase ``agent_memories`` table (one row per role, JSONB
-arrays for documents and recommendations).
+Upstream TradingAgents (v0.2.4+) keeps its memory as an append-only
+markdown decision log (``TradingMemoryLog``): every run logs its decision
+as *pending*, later runs settle it with the realised return and a
+reflection, and the Portfolio Manager reads recent entries as past
+context. The log is a local file, so on ephemeral deploys (Railway, Fly)
+it would be lost between sessions.
 
-The BM25 index itself is NOT serialized — it is deterministically rebuilt
-from the ``documents`` list on each load.
+This store mirrors that file to the Supabase ``agent_memories`` table as
+one row (role ``decision_log``, one JSONB ``documents`` element per log
+entry): ``load()`` restores it into the graph's log file before a run,
+``save()`` uploads it afterwards.
 
-Design: operates on the **same** memory objects that the upstream
-``TradingAgentsGraph`` holds as public attributes, so all agent node
-closures continue to reference the correct instances.
+The per-agent BM25 memories of upstream v0.2.0 (``bull_memory`` etc.)
+are retired upstream. Their rows are left untouched and remain
+searchable through :meth:`MemoryStore.recall`.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from skopaq.db.models import AgentMemoryRecord
@@ -25,8 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The 5 upstream memory attribute names on TradingAgentsGraph
-MEMORY_ROLES = (
+# Row holding the mirrored decision log.
+DECISION_LOG_ROLE = "decision_log"
+
+# Per-agent memory rows written before the v0.5.1 upstream sync (read-only now).
+LEGACY_MEMORY_ROLES = (
     "bull_memory",
     "bear_memory",
     "trader_memory",
@@ -34,13 +44,56 @@ MEMORY_ROLES = (
     "risk_manager_memory",
 )
 
+# Entry separator used by upstream's TradingMemoryLog.
+_SEPARATOR = "\n\n<!-- ENTRY_END -->\n\n"
+
+# "[2026-09-24 | RELIANCE.NS | Buy | pending]" → date, ticker
+_TAG_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}) \| ([^|]+?) \|")
+
+
+def _entry_key(entry: str) -> tuple[str, str] | None:
+    match = _TAG_RE.match(entry)
+    return (match.group(1), match.group(2).strip()) if match else None
+
+
+def _is_pending(entry: str) -> bool:
+    return entry.splitlines()[0].rstrip().endswith("| pending]")
+
+
+def _split_entries(text: str) -> list[str]:
+    return [e.strip() for e in text.split(_SEPARATOR) if e.strip()]
+
+
+def merge_entries(*sources: list[str]) -> list[str]:
+    """Union of decision-log entries, one per (date, ticker), oldest first.
+
+    When the same decision appears twice, the settled copy wins over the
+    pending one; otherwise the first source wins. Entries without a
+    recognisable tag are dropped.
+    """
+    merged: dict[tuple[str, str], str] = {}
+    for entries in sources:
+        for entry in entries:
+            key = _entry_key(entry)
+            if key is None:
+                continue
+            current = merged.get(key)
+            if current is None or (_is_pending(current) and not _is_pending(entry)):
+                merged[key] = entry
+    return [merged[key] for key in sorted(merged, key=lambda k: k[0])]
+
+
+def _log_path(graph: Any) -> Path | None:
+    memory_log = getattr(graph, "memory_log", None)
+    return getattr(memory_log, "_log_path", None)
+
 
 class MemoryStore:
-    """Load and save agent memories to Supabase.
+    """Load and save upstream's decision log to Supabase.
 
     Args:
         client: Authenticated Supabase client (service-role key).
-        max_entries: FIFO cap — oldest entries are pruned at save time.
+        max_entries: FIFO cap — only the most recent entries are uploaded.
     """
 
     def __init__(self, client: Client, max_entries: int = 50) -> None:
@@ -48,104 +101,103 @@ class MemoryStore:
         self._max_entries = max_entries
 
     def load(self, graph: Any) -> int:
-        """Populate the graph's memory objects from Supabase.
+        """Restore the decision log from Supabase into the graph's log file.
 
-        Mutates ``graph.<role>_memory.documents`` and
-        ``graph.<role>_memory.recommendations`` **in place**, then
-        rebuilds the BM25 index so agents can immediately query
-        past lessons.
+        Entries already in the local file are kept (merged by date and
+        ticker), so a long-lived machine does not lose its own history.
 
         Args:
             graph: An upstream ``TradingAgentsGraph`` instance.
 
         Returns:
-            Total number of memory entries loaded across all roles.
+            Number of entries in the log after loading.
         """
-        total = 0
-        try:
-            records = self._repo.get_all_roles()
-        except Exception:
-            logger.warning("Failed to load agent memories from Supabase — starting fresh", exc_info=True)
+        path = _log_path(graph)
+        if path is None:
             return 0
 
-        # Index by role for O(1) lookup
-        by_role: dict[str, AgentMemoryRecord] = {r.role: r for r in records}
+        try:
+            record = self._repo.get_by_role(DECISION_LOG_ROLE)
+        except Exception:
+            logger.warning(
+                "Failed to load decision log from Supabase — starting fresh", exc_info=True
+            )
+            return 0
+        if record is None or not record.documents:
+            return 0
 
-        for role in MEMORY_ROLES:
-            memory = getattr(graph, role, None)
-            if memory is None:
-                continue
-
-            record = by_role.get(role)
-            if record is None or not record.documents:
-                continue
-
-            # Validate parallel arrays
-            docs = record.documents
-            recs = record.recommendations
-            if len(docs) != len(recs):
-                logger.warning(
-                    "Memory %s has mismatched lengths (docs=%d, recs=%d) — skipping",
-                    role, len(docs), len(recs),
-                )
-                continue
-
-            # Mutate in place (preserves upstream references)
-            memory.documents = list(docs)
-            memory.recommendations = list(recs)
-            memory._rebuild_index()
-
-            loaded = len(docs)
-            total += loaded
-            logger.info("Loaded %d memories for %s", loaded, role)
-
-        logger.info("Total agent memories loaded: %d", total)
-        return total
+        local = _split_entries(path.read_text(encoding="utf-8")) if path.exists() else []
+        entries = merge_entries(record.documents, local)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_SEPARATOR.join(entries) + _SEPARATOR, encoding="utf-8")
+        logger.info(
+            "Decision log restored: %d entries (%d from Supabase)",
+            len(entries), len(record.documents),
+        )
+        return len(entries)
 
     def save(self, graph: Any) -> int:
-        """Persist the graph's memory objects to Supabase.
-
-        Applies a FIFO cap (``max_entries``) — only the most recent
-        entries are kept.  Uses ``UPSERT`` on ``(user_id, role)``
-        so each role has exactly one row.
+        """Upload the graph's decision log to Supabase.
 
         Args:
             graph: An upstream ``TradingAgentsGraph`` instance.
 
         Returns:
-            Total number of memory entries saved across all roles.
+            Number of entries saved.
         """
-        total = 0
+        path = _log_path(graph)
+        if path is None or not path.exists():
+            return 0
 
-        for role in MEMORY_ROLES:
-            memory = getattr(graph, role, None)
-            if memory is None:
+        entries = merge_entries(_split_entries(path.read_text(encoding="utf-8")))
+        if not entries:
+            return 0
+        if len(entries) > self._max_entries:
+            entries = entries[-self._max_entries:]
+
+        try:
+            self._repo.upsert(AgentMemoryRecord(role=DECISION_LOG_ROLE, documents=entries))
+        except Exception:
+            logger.warning("Failed to save decision log to Supabase", exc_info=True)
+            return 0
+        logger.info("Decision log saved: %d entries", len(entries))
+        return len(entries)
+
+    def recall(self, situation: str, n_matches: int = 2) -> dict[str, list[dict[str, Any]]]:
+        """BM25-rank stored lessons against *situation*.
+
+        Searches the decision log and the legacy per-agent memories.
+
+        Returns:
+            ``{role: [{"recommendation": str, "score": float}, ...]}``, best
+            match first, for every role that has stored entries.
+        """
+        from rank_bm25 import BM25Okapi
+
+        records = {r.role: r for r in self._repo.get_all_roles()}
+        corpora: dict[str, tuple[list[str], list[str]]] = {}
+
+        log = records.get(DECISION_LOG_ROLE)
+        if log is not None and log.documents:
+            corpora[DECISION_LOG_ROLE] = (log.documents, log.documents)
+        for role in LEGACY_MEMORY_ROLES:
+            record = records.get(role)
+            if record is None or not record.documents:
                 continue
+            if len(record.documents) == len(record.recommendations):
+                corpora[role] = (record.documents, record.recommendations)
 
-            docs = memory.documents
-            recs = memory.recommendations
+        query = _tokenize(situation)
+        results: dict[str, list[dict[str, Any]]] = {}
+        for role, (documents, answers) in corpora.items():
+            scores = BM25Okapi([_tokenize(d) for d in documents]).get_scores(query)
+            ranked = sorted(range(len(documents)), key=lambda i: scores[i], reverse=True)
+            results[role] = [
+                {"recommendation": answers[i], "score": float(scores[i])}
+                for i in ranked[:n_matches]
+            ]
+        return results
 
-            if not docs:
-                continue
 
-            # FIFO cap — keep only the most recent entries
-            if len(docs) > self._max_entries:
-                docs = docs[-self._max_entries:]
-                recs = recs[-self._max_entries:]
-
-            record = AgentMemoryRecord(
-                role=role,
-                documents=docs,
-                recommendations=recs,
-            )
-
-            try:
-                self._repo.upsert(record)
-                saved = len(docs)
-                total += saved
-                logger.info("Saved %d memories for %s", saved, role)
-            except Exception:
-                logger.warning("Failed to save memories for %s", role, exc_info=True)
-
-        logger.info("Total agent memories saved: %d", total)
-        return total
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"\b\w+\b", text.lower()) or [""]

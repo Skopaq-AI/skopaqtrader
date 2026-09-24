@@ -237,6 +237,8 @@ class TestHandleSell:
         reflect_arg = graph.reflect.call_args[0][0]
         assert "RELIANCE" in reflect_arg
         assert "PROFIT" in reflect_arg
+        # The symbol lets the graph settle that ticker's pending decisions
+        assert graph.reflect.call_args.kwargs["symbol"] == "RELIANCE"
 
     @pytest.mark.asyncio
     async def test_sell_computes_correct_pnl(self, lifecycle, trade_repo, graph):

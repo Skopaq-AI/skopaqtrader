@@ -97,7 +97,7 @@ async def run_evolution_cycle(
     )
 
     try:
-        from tradingagents.dataflows.interface import route_to_vendor
+        from tradingagents.dataflows.router import route_to_vendor
         from tradingagents.dataflows.config import set_config
         from skopaq.backtest.engine import BacktestConfig, run_backtest
         from skopaq.backtest.walk_forward import walk_forward_test
@@ -109,7 +109,7 @@ async def run_evolution_cycle(
 
         # Setup data config
         set_config({
-            'data_vendors': {'core_stock_apis': 'indstocks', 'technical_indicators': 'yfinance'},
+            'data_vendors': {'core_stock_apis': 'indstocks,yfinance', 'technical_indicators': 'yfinance'},
             'yfinance_symbol_suffix': '.NS',
         })
 

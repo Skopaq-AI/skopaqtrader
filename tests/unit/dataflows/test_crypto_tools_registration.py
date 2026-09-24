@@ -7,7 +7,7 @@ class TestCryptoToolImports:
     """Verify all 8 crypto tools import correctly and are @tool-decorated."""
 
     def test_import_onchain_tools(self):
-        from tradingagents.agents.utils.crypto_tools import (
+        from tradingagents.agents.crypto_tools import (
             get_blockchain_stats,
             get_address_activity,
         )
@@ -16,7 +16,7 @@ class TestCryptoToolImports:
         assert hasattr(get_address_activity, "name")
 
     def test_import_defi_tools(self):
-        from tradingagents.agents.utils.crypto_tools import (
+        from tradingagents.agents.crypto_tools import (
             get_token_fundamentals,
             get_defi_tvl,
             get_chain_tvl_overview,
@@ -26,7 +26,7 @@ class TestCryptoToolImports:
         assert hasattr(get_chain_tvl_overview, "name")
 
     def test_import_funding_tools(self):
-        from tradingagents.agents.utils.crypto_tools import (
+        from tradingagents.agents.crypto_tools import (
             get_funding_rates,
             get_open_interest,
             get_long_short_ratio,
@@ -37,7 +37,7 @@ class TestCryptoToolImports:
 
     def test_tool_count(self):
         """All 8 crypto tools should be importable."""
-        from tradingagents.agents.utils import crypto_tools
+        from tradingagents.agents import crypto_tools
         tool_names = [
             "get_blockchain_stats", "get_address_activity",
             "get_token_fundamentals", "get_defi_tvl", "get_chain_tvl_overview",
