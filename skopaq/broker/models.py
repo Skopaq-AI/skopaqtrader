@@ -297,7 +297,12 @@ class TradingSignal(BaseModel):
     exchange: Exchange = Exchange.NSE
     action: str  # BUY, SELL, HOLD
     confidence: int = Field(ge=0, le=100, default=50)
+    # The order's limit price; with order_type=MARKET, the reference price
+    # (e.g. the LTP an exit was decided at), used as the fill estimate.
     entry_price: Optional[float] = None
+    # None: LIMIT at entry_price when it is set, else MARKET. Protective exits
+    # set MARKET so a stop-loss below the entry price still fills.
+    order_type: Optional[OrderType] = None
     stop_loss: Optional[float] = None
     target: Optional[float] = None
     quantity: Optional[Decimal] = None

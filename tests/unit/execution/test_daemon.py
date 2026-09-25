@@ -596,7 +596,9 @@ async def test_close_phase_records_force_sells(daemon):
         await daemon._phase_close()
 
     signal, execution = record.await_args.args
-    assert (signal.symbol, signal.action, signal.entry_price) == ("TCS", "SELL", 4000.0)
+    # No last price and no broker client: no estimate rather than the average price
+    # (which would record the close as breakeven)
+    assert (signal.symbol, signal.action, signal.entry_price) == ("TCS", "SELL", None)
     assert execution is sold
 
 

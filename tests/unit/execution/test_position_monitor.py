@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from skopaq.agents.sell_analyst import SellDecision
-from skopaq.broker.models import Position, Quote, TradingSignal
+from skopaq.broker.models import OrderType, Position, Quote, TradingSignal
 from skopaq.execution.position_monitor import (
     MonitoredPosition,
     MonitorResult,
@@ -288,7 +288,10 @@ class TestExecution:
     async def test_sell_uses_market_order(
         self, config, mock_executor,
     ):
-        """SELL signal should have entry_price set (not None) for P&L tracking."""
+        """An exit is a MARKET SELL; entry_price carries the LTP as the fill estimate.
+
+        A LIMIT at the entry price (100) would never fill for this stop at 95.
+        """
         mon = _make_monitor(
             mock_executor, MagicMock(), MagicMock(), config, ai_enabled=False,
         )
@@ -310,7 +313,8 @@ class TestExecution:
         signal = call_args[0][0]  # First positional arg
         assert isinstance(signal, TradingSignal)
         assert signal.action == "SELL"
-        assert signal.entry_price == 100.0
+        assert signal.order_type == OrderType.MARKET
+        assert signal.entry_price == 95.0
         assert signal.quantity == Decimal("10")
 
     @pytest.mark.asyncio
@@ -563,7 +567,9 @@ class TestExitRecording:
         pos = MonitoredPosition(symbol="TEST", scrip_code="NSE_1", entry_price=100.0, quantity=10)
         assert await mon._execute_sell(pos, ltp=95.0, reason="stop", result=MonitorResult())
 
-        assert recorded == [("TEST", "SELL", 100.0,
+        # entry_price is the exit's price (the LTP): it becomes the SELL row's price
+        # and, live, the fill estimate the lifecycle closes the BUY with
+        assert recorded == [("TEST", "SELL", 95.0,
                              mock_executor.execute_signal.return_value)]
 
     @pytest.mark.asyncio

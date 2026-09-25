@@ -87,26 +87,38 @@ class SafetyChecker:
         ``holdings`` (delivery holdings) count alongside ``positions`` when
         checking that a SELL only sells what is held.
 
+        A SELL can only reduce a held long position (the no-short-sale check
+        rejects anything more, and option SELLs are rejected outright), so the
+        checks that limit new risk — position size, order value, lot count,
+        the loss limits and the cool-down after a loss — apply to BUYs only.
+        Otherwise a stop-loss or EOD exit would be refused exactly when it is
+        needed: after a loss, or for a position that has grown. Market hours,
+        the order rate and the no-short-sale rule still apply to SELLs.
+
         Returns a ``SafetyResult`` with ``passed=True`` if all checks pass,
         or ``passed=False`` with a list of rejection reasons.
         """
         rejections: list[str] = []
+        adds_risk = order.side == Side.BUY
 
         self._check_trading_halt(order, rejections)
         self._check_market_hours(rejections)
         self._check_no_short_sale(order, positions, holdings or [], rejections)
-        self._check_position_size(order, portfolio_value, rejections)
-        self._check_order_value(order, rejections)
+        if adds_risk:
+            self._check_position_size(order, portfolio_value, rejections)
+            self._check_order_value(order, rejections)
+            self._check_max_lots(order, rejections)
         self._check_max_positions(order, positions, rejections)
         self._check_stop_loss(order, signal, rejections)
         self._check_min_stop_loss_pct(order, rejections)
-        self._check_max_lots(order, rejections)
         self._check_sector_concentration(order, positions, portfolio_value, rejections)
-        self._check_daily_loss(portfolio_value, rejections)
-        self._check_weekly_loss(portfolio_value, rejections)
-        self._check_monthly_loss(portfolio_value, rejections)
+        if adds_risk:
+            self._check_daily_loss(portfolio_value, rejections)
+            self._check_weekly_loss(portfolio_value, rejections)
+            self._check_monthly_loss(portfolio_value, rejections)
         self._check_order_rate(rejections)
-        self._check_cool_down(rejections)
+        if adds_risk:
+            self._check_cool_down(rejections)
         self._check_naked_options(order, rejections)
         self._check_sufficient_funds(order, funds, rejections)
         self._check_minimum_confidence(signal, rejections)

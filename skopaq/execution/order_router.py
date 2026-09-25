@@ -102,7 +102,11 @@ class OrderRouter:
                 order=response,
                 signal=signal,
                 mode="live",
-                fill_price=order.price,   # Limit price (actual fill via order book)
+                # Limit price, or for MARKET the signal's reference price; the
+                # actual fill is in the broker's trade book
+                fill_price=order.price if order.price is not None else (
+                    signal.entry_price if signal else None
+                ),
                 brokerage=20.0,           # INDstocks flat fee estimate
             )
         except Exception as exc:

@@ -154,7 +154,7 @@ skopaq/
 
 ## Key Conventions
 
-1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order. Its daily/weekly/monthly loss limits are seeded from P&L stored in Supabase (`skopaq/execution/pnl_history.py`), so they hold across processes; the kill switch (`skopaq/execution/kill_switch.py`: `skopaq halt`, `SKOPAQ_TRADING_HALTED`, or the `system_flags` row) rejects every BUY while on.
+1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order; the limits on new risk (size, value, lots, loss limits, cool-down) apply to BUYs only, since a SELL can only reduce what is held, and protective exits are MARKET orders, not LIMITs at the entry price (live fills are not yet confirmed from the broker's order book). Its daily/weekly/monthly loss limits are seeded from P&L stored in Supabase (`skopaq/execution/pnl_history.py`), so they hold across processes; the kill switch (`skopaq/execution/kill_switch.py`: `skopaq halt`, `SKOPAQ_TRADING_HALTED`, or the `system_flags` row) rejects every BUY while on.
 2. **Paper mode is default** — All CLI commands default to paper trading. Live mode requires explicit `--live` or `SKOPAQ_TRADING_MODE=live` + confirmation prompt.
 3. **Upstream modifications are minimal** — Changes to `tradingagents/` must be documented in `UPSTREAM_CHANGES.md` with backward-compatibility notes.
 4. **No secrets in code** — All credentials come from environment variables. Never commit `.env`, token files, or API keys.
