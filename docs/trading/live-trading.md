@@ -119,6 +119,11 @@ Live trading enforces immutable safety rules defined in `skopaq/constants.py`:
 !!! note "Immutable rules"
     `SafetyRules` is a frozen dataclass. These values cannot be modified at runtime by any automated process. Only a human can edit `skopaq/constants.py`.
 
+!!! note "Exits are never blocked by the risk limits"
+    A SELL can only reduce a position you hold: the no-short-sale check refuses anything more. So the limits on new risk (position size, order value, lot count, the daily/weekly/monthly loss limits and the cool-down after a loss) apply to BUYs only. Stop-loss, trailing-stop, EOD and AI exits go to the broker as MARKET orders, not as LIMIT orders at your entry price, so a stop-loss below entry is no longer held back. Market hours, the order rate limit and the no-short-sale rule still apply to SELLs.
+
+    Two limits remain in live mode: INDstocks may price a MARKET order as a LIMIT at the live price, which can rest in a fast-falling market, and Skopaq treats an order the broker accepted as filled (the exit is recorded at the LTP it was decided at). Check the broker's order book after a volatile session.
+
 ## Pre-Live Checklist
 
 ```bash

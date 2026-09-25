@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from skopaq.agents.sell_analyst import SellDecision, analyze_exit
-from skopaq.broker.models import TradingSignal
+from skopaq.broker.models import OrderType, TradingSignal
 
 if TYPE_CHECKING:
     from skopaq.broker.client import INDstocksClient
@@ -340,11 +340,14 @@ class PositionMonitor:
             pos.symbol, pos.quantity, reason,
         )
 
+        # MARKET: a LIMIT at the entry price never fills once a stop-loss has
+        # fired below it. entry_price carries the LTP as the fill estimate.
         signal = TradingSignal(
             symbol=pos.symbol,
             action="SELL",
             confidence=80,
-            entry_price=pos.entry_price,
+            entry_price=ltp,
+            order_type=OrderType.MARKET,
             quantity=Decimal(pos.quantity),
             reasoning=reason,
         )

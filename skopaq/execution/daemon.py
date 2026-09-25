@@ -619,15 +619,19 @@ class TradingDaemon:
         )
 
         from decimal import Decimal
-        from skopaq.broker.models import TradingSignal
+        from skopaq.broker.models import OrderType, TradingSignal
 
         for pos in open_positions:
             try:
+                # MARKET, as the docstring says: a LIMIT at the average price
+                # would not fill for a position in loss. entry_price is only the
+                # fill estimate the exit is recorded at.
                 signal = TradingSignal(
                     symbol=pos.symbol,
                     action="SELL",
                     confidence=100,
-                    entry_price=pos.average_price,
+                    entry_price=await self._reference_price(pos),
+                    order_type=OrderType.MARKET,
                     quantity=Decimal(int(pos.quantity)),
                     reasoning="DAEMON CLOSE: EOD safety net sell-all",
                 )
@@ -648,6 +652,30 @@ class TradingDaemon:
                 logger.error(
                     "Force-sell FAILED for %s", pos.symbol, exc_info=True,
                 )
+
+    async def _reference_price(self, pos) -> Optional[float]:
+        """The price a MARKET exit of *pos* is recorded at until the real fill is known.
+
+        The last price when the backend reports one (paper), else the LTP from
+        the broker (INDstocks positions carry no last price). ``None`` rather
+        than the average price, which is the cost basis and would record every
+        close as breakeven. Never raises: a missing estimate must not block the sell.
+        """
+        try:
+            last = float(pos.last_price or 0)
+            if last > 0:
+                return last
+            if self._client is None:
+                return None
+            from skopaq.broker.scrip_resolver import resolve_scrip_code
+
+            ltp = float(await self._client.get_ltp(
+                await resolve_scrip_code(self._client, pos.symbol)) or 0)
+            return ltp if ltp > 0 else None
+        except Exception:
+            logger.warning("No price for %s — its close is sent without a price estimate",
+                           pos.symbol, exc_info=True)
+            return None
 
     # ── Utilities ─────────────────────────────────────────────────────
 

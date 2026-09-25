@@ -21,7 +21,7 @@ from skopaq.broker.models import (
     TradingSignal,
 )
 from skopaq.execution.order_router import OrderRouter
-from skopaq.execution.safety_checker import SafetyChecker
+from skopaq.execution.safety_checker import SafetyChecker, _base_symbol
 from skopaq.risk.position_sizer import PositionSizer
 
 logger = logging.getLogger(__name__)
@@ -147,12 +147,12 @@ class Executor:
             order_id=result.order.order_id if result.order else "",
         )
 
-        # Step 4: Record P&L for loss tracking (on fills)
+        # Step 4: Record P&L for loss tracking (on fills): the fill against the
+        # cost basis of what was sold, so the loss limits and cool-down see it
         if result.success and result.fill_price and signal.action == "SELL":
-            # Approximate P&L from signal entry vs fill
-            entry = signal.entry_price or 0
-            if entry > 0 and order.quantity:
-                pnl = (result.fill_price - entry) * float(order.quantity)
+            cost = _cost_basis(order.symbol, positions, holdings)
+            if cost and order.quantity:
+                pnl = (result.fill_price - cost) * float(order.quantity)
                 self._safety.record_pnl(pnl)
 
         logger.info(
@@ -257,11 +257,11 @@ class Executor:
 
         side = Side.BUY if signal.action == "BUY" else Side.SELL
 
-        # Determine order type
-        if signal.entry_price:
-            order_type = OrderType.LIMIT
-        else:
-            order_type = OrderType.MARKET
+        # Determine order type: explicit (exits sell at MARKET), else LIMIT
+        # at the entry price when there is one
+        order_type = signal.order_type or (
+            OrderType.LIMIT if signal.entry_price else OrderType.MARKET
+        )
 
         # Determine quantity
         quantity = signal.quantity or 1  # Default to 1 if not specified
@@ -272,7 +272,7 @@ class Executor:
             side=side,
             quantity=quantity,
             order_type=order_type,
-            price=signal.entry_price,
+            price=signal.entry_price if order_type == OrderType.LIMIT else None,
             trigger_price=signal.stop_loss if side == Side.BUY else None,
             product=Product.CNC,
             tag=f"skopaq-{signal.confidence}",
@@ -343,3 +343,18 @@ class Executor:
         except Exception:
             logger.debug("yfinance price fetch failed for %s", symbol, exc_info=True)
         return None
+
+
+def _cost_basis(symbol: str, positions: list, holdings: list) -> Optional[float]:
+    """Average price paid for *symbol*: a long position first, else the holding.
+
+    Rows with no long quantity are skipped: live, shares sold earlier today show
+    as a net-negative position while the delivery holding keeps the real cost.
+    """
+    base = _base_symbol(symbol)
+    for item in [*positions, *holdings]:
+        price = float(getattr(item, "average_price", 0) or 0)
+        if (_base_symbol(getattr(item, "symbol", "")) == base
+                and (getattr(item, "quantity", 0) or 0) > 0 and price > 0):
+            return price
+    return None

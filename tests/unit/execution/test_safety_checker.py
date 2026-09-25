@@ -328,12 +328,17 @@ class TestMaxLots:
         assert not result.passed
         assert any("Quantity 6 exceeds max 5" in r for r in result.rejections)
 
-    def test_sell_also_checked(self, strict_checker, funds, signal_with_sl):
-        """Max lots applies to both buy and sell (prevents accidental over-sell)."""
-        order = _sell_order(qty=10, price=100)
-        result = strict_checker.validate(order, signal_with_sl, [], funds, 1_000_000)
-        assert not result.passed
-        assert any("exceeds max" in r for r in result.rejections)
+    def test_sell_is_bounded_by_what_is_held_not_the_lot_limit(
+        self, strict_checker, funds, signal_with_sl,
+    ):
+        """An over-sell is refused by the no-short-sale check; a held position of
+        any size can be sold (tests/unit/execution/test_protective_exits.py)."""
+        over = strict_checker.validate(_sell_order(qty=10, price=100), signal_with_sl,
+                                       _held(qty=6), funds, 1_000_000)
+        whole = strict_checker.validate(_sell_order(qty=10, price=100), signal_with_sl,
+                                        _held(qty=10), funds, 1_000_000)
+        assert any("No short sales" in r for r in over.rejections)
+        assert whole.passed, whole.rejections
 
 
 class TestSectorConcentration:
