@@ -90,7 +90,7 @@ def test_api_is_published_on_loopback_only(services):
 
 
 def test_scheduler_grace_period_outlasts_the_kill_after(services):
-    kill_after = SkopaqConfig.model_fields["scheduler_kill_after_seconds"].default
+    kill_after = int(SkopaqConfig.model_fields["scheduler_kill_after_seconds"].default)
     assert _seconds(services["scheduler"]["stop_grace_period"]) > kill_after
 
 

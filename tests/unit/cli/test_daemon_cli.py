@@ -56,9 +56,20 @@ def test_session_runs_on_a_trading_day():
 
 
 def test_failed_session_exits_1():
-    report = DaemonSessionReport(session_date="2026-09-28", errors=["broker down"])
+    report = DaemonSessionReport(session_date="2026-09-28", errors=["broker down"], failed=True)
     result, _ = _invoke(MONDAY_10AM, "--paper", report=report)
     assert result.exit_code == 1
+
+
+def test_candidate_errors_alone_exit_0():
+    """One candidate's analysis failing (an LLM 429) is not a failed session: exit 1 would
+    make the scheduler alert, ping the dead-man's switch as failed and, live, start a
+    recovery `skopaq monitor`."""
+    report = DaemonSessionReport(
+        session_date="2026-09-28", errors=["AAA: 429 rate limited by Gemini"], holds=1,
+    )
+    result, _ = _invoke(MONDAY_10AM, "--paper", report=report)
+    assert result.exit_code == 0
 
 
 def test_pre_open_failure_exits_3():

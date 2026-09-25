@@ -242,6 +242,34 @@ async def test_a_later_failure_is_not_a_pre_open_failure(daemon):
         report = await daemon.run_session()
     assert report.errors == ["scanner down"]
     assert not report.pre_open_failed
+    assert report.failed
+
+
+@pytest.mark.asyncio
+async def test_candidate_errors_do_not_fail_the_session(daemon):
+    daemon._graph = AsyncMock()
+    daemon._router = MagicMock()
+    daemon._router._paper = MagicMock()
+    daemon._graph.analyze_and_execute = AsyncMock(side_effect=[
+        MagicMock(error="429 rate limited by Gemini", signal=None, execution=None),
+        MagicMock(error=None, signal=MagicMock(action="HOLD", confidence=30), execution=None),
+    ])
+    candidates = [MagicMock(symbol="AAA", urgency="high"),
+                  MagicMock(symbol="BBB", urgency="normal")]
+
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock), \
+         patch.object(daemon, "_halt_status", return_value=MagicMock(halted=False)), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock, return_value=candidates), \
+         patch.object(daemon, "_phase_close", new_callable=AsyncMock), \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch.object(daemon, "_notify_report", new_callable=AsyncMock), \
+         patch("skopaq.cli.main._compute_risk_scales", return_value=(1.0, 1.0)), \
+         patch("skopaq.cli.main._inject_paper_quote", new_callable=AsyncMock):
+        report = await daemon.run_session()
+
+    assert report.errors == ["AAA: 429 rate limited by Gemini"]
+    assert report.holds == 1
+    assert not report.failed
 
 
 @pytest.mark.asyncio

@@ -127,18 +127,20 @@ class SkopaqConfig(BaseSettings):
     daemon_heartbeat_interval_seconds: int = 300  # Heartbeat log interval (5 min)
 
     # ── Scheduler (always-on host: docker compose `scheduler`) ─────────
-    # Plain str, not Literal: a typo fails only the scheduler, not every service.
-    scheduler_enabled: bool = True  # False: stay up and healthy, start no sessions (cutover)
+    # Plain str, not bool/int/Literal: every service builds a SkopaqConfig, so a typo here
+    # would stop api and telegram too. ScheduleSettings.from_config parses them, and a bad
+    # value stops only the scheduler (a bad CONFIRM_LIVE counts as not confirmed).
+    scheduler_enabled: str = "true"  # false: stay up and healthy, start no sessions (cutover)
     scheduler_mode: str = "paper"  # paper | live (live also needs scheduler_confirm_live)
-    scheduler_confirm_live: bool = False  # like --confirm-live
+    scheduler_confirm_live: str = "false"  # true: like --confirm-live
     scheduler_start: str = "09:15"  # IST, first daemon launch (scan follows the scan delay)
     scheduler_last_start: str = "11:30"  # IST, end of the catch-up window if the host was down
     scheduler_deadline: str = "15:45"  # IST, SIGTERM a session still running (EOD exit is 15:20)
     scheduler_settle_at: str = "18:30"  # IST, `skopaq settle` backstop; "" = off
     # IST, alert if the INDstocks token is missing or expires before the session ends; "" = off
     scheduler_preflight: str = "08:45"
-    scheduler_poll_seconds: int = 30
-    scheduler_kill_after_seconds: int = 300  # SIGKILL this long after the deadline/stop SIGTERM
+    scheduler_poll_seconds: str = "30"
+    scheduler_kill_after_seconds: str = "300"  # SIGKILL this long after the deadline/stop SIGTERM
     scheduler_state_dir: str = "~/scheduler"  # at-most-once markers (on the home volume)
     # Optional dead-man's switch: GET URL on success, URL/fail on failure
     scheduler_ping_url: str = ""

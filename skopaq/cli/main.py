@@ -865,7 +865,7 @@ def daemon(
         from skopaq.execution.daemon import PRE_OPEN_FAILED_EXIT_CODE
 
         raise typer.Exit(PRE_OPEN_FAILED_EXIT_CODE)
-    if report.errors:
+    if report.failed:  # not for a candidate's failed analysis: the session itself ran
         raise typer.Exit(1)  # lets schedulers (skopaq schedule, Railway cron) see failed sessions
 
 
@@ -916,16 +916,21 @@ def schedule(
     from skopaq.execution.scheduler import (
         SchedulerState,
         ScheduleSettings,
+        alert_invalid_config,
         check_ok,
         describe,
         run_forever,
     )
     from skopaq.risk import calendar as nse_calendar
 
+    config = None
     try:
-        settings = ScheduleSettings.from_config(SkopaqConfig())
+        config = SkopaqConfig()
+        settings = ScheduleSettings.from_config(config)
     except ValueError as exc:
         display_error(str(exc))
+        if not check and config is not None:  # a SkopaqConfig error stops every service anyway
+            alert_invalid_config(config, str(exc))
         raise typer.Exit(1)
 
     if check:
