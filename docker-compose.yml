@@ -69,6 +69,11 @@ services:
     <<: *skopaq
     command: telegram
     restart: unless-stopped
+    # Created after api: containers first-mounting the new home volume at the same time race
+    # while Docker copies the image's home into it ("mkdir ...: file exists").
+    depends_on:
+      api:
+        condition: service_started
     environment:
       <<: *skopaq-env
       SKOPAQ_HEARTBEAT_FILE: /tmp/skopaq-telegram.heartbeat
@@ -84,6 +89,11 @@ services:
     <<: *skopaq
     command: scheduler
     restart: unless-stopped
+    # Created after api: containers first-mounting the new home volume at the same time race
+    # while Docker copies the image's home into it ("mkdir ...: file exists").
+    depends_on:
+      api:
+        condition: service_started
     stop_grace_period: 6m           # longer than the 5 min kill-after, so CLOSING can finish
     environment:
       <<: *skopaq-env
