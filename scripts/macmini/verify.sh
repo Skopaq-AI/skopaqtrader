@@ -26,8 +26,10 @@ for arg in "$@"; do
 
   --build              docker compose build first
   --up                 docker compose up -d first (api, telegram, scheduler)
-  --probe-kill-switch  halt in api, check the scheduler sees it, resume (refused on a
-                       trading day 09:00-15:45 IST unless --force)
+  --probe-kill-switch  halt in api, check the scheduler sees it, lift the probe's own
+                       halt (skipped while trading is already halted or the halt state
+                       is unreadable; refused on a trading day 09:00-15:45 IST unless
+                       --force)
   --unit-tests         run tests/unit inside the image (without .env or the stack's volumes)
   --dry-run-daemon     docker compose run --rm daemon --dry-run (makes scanner LLM calls)
 EOF
@@ -393,6 +395,102 @@ if [ "$PROBE" = 1 ] || [ "$UNIT" = 1 ] || [ "$DRYRUN" = 1 ]; then
     echo "== Optional"
 fi
 
+# Halts in api, checks the scheduler sees it, and lifts only the probe's own halt. A halt
+# already in place (an operator's, or a deploy-level SKOPAQ_TRADING_HALTED) must survive it:
+# halt() overwrites the file and the Supabase row, and status() takes an unreadable Supabase
+# for "not halted". So one api process reads every source itself, then halts only if none
+# is halted and all could be read (only a halt landing within that process, between its
+# read and its write, can still be overwritten).
+probe_kill_switch() {
+    # A reason no one else uses, so only the probe's own halt is lifted below.
+    PROBE_REASON="verify.sh probe $$-$RANDOM"
+    HALT_OUT="$(in_svc api python -c '
+import sys
+from skopaq.execution import kill_switch as k
+try:
+    config = k._config()
+    flags = k._flags(config)
+    row = flags.get(k.HALT_FLAG_KEY) if flags is not None else None
+except Exception as exc:
+    print("UNREADABLE %s: %s" % (type(exc).__name__, " ".join(str(exc).split())))
+    sys.exit()
+held = k._file_status()
+if config.trading_halted:
+    held = k.HaltStatus(True, "SKOPAQ_TRADING_HALTED is set", "", "env")
+elif not held and row and row.get("halted"):
+    held = k.HaltStatus(True, row.get("reason", ""), row.get("since", ""), "supabase")
+if held:
+    print("HALTED " + held.describe())
+    sys.exit()
+try:
+    print("PROBE_HALTED " + " ".join(k.halt(sys.argv[1], by="verify.sh probe")))
+except RuntimeError as exc:
+    print("FAILED " + " ".join(str(exc).split()))
+' "$PROBE_REASON" 2>&1 | tail -n 1)"
+    case "$HALT_OUT" in
+        PROBE_HALTED*) ;;
+        HALTED*) warn "kill-switch probe" "skipped: trading is already halted and the probe would lift that halt: ${HALT_OUT#HALTED }"; return ;;
+        UNREADABLE*) fail "kill-switch probe" "skipped: cannot read the halt state (${HALT_OUT#UNREADABLE }): the probe would overwrite a halt it cannot see"; return ;;
+        *) fail "kill-switch probe" "could not halt in api: $HALT_OUT"; return ;;
+    esac
+    SEEN="$(in_svc scheduler python -c '
+from skopaq.execution import kill_switch
+print(kill_switch.status(use_cache=False).describe())
+' 2>&1 | tail -n 1)"
+    case "$SEEN" in
+        *HALTED*) pass "kill-switch probe" "the scheduler sees the halt set in api" ;;
+        *) fail "kill-switch probe" "the scheduler does not see the halt: $SEEN" ;;
+    esac
+    case "$HALT_OUT" in
+        *supabase:system_flags*) pass "kill-switch probe" "recorded in Supabase" ;;
+        *) warn "kill-switch probe" "not recorded in Supabase (only this host is halted)" ;;
+    esac
+    # Lift only what still carries the probe's reason: someone may have halted trading
+    # (Telegram /halt, another terminal or machine) while it ran.
+    RESUMED="$(in_svc api python -c '
+import sys
+from datetime import datetime, timezone
+from skopaq.execution import kill_switch as k
+probe, lifted, kept = sys.argv[1], [], []
+held = k._file_status()
+if held and held.reason == probe:
+    k.halt_file().unlink(missing_ok=True)
+    lifted.append("file")
+elif held:
+    kept.append(held)
+try:
+    config = k._config()
+    flags = k._flags(config)
+    row = flags.get(k.HALT_FLAG_KEY) if flags is not None else None
+    if row and row.get("halted") and row.get("reason") == probe:
+        flags.set(k.HALT_FLAG_KEY, {
+            "halted": False, "by": "verify.sh probe",
+            "resumed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+        lifted.append("supabase")
+    elif row and row.get("halted"):
+        kept.append(k.HaltStatus(True, row.get("reason", ""), row.get("since", ""), "supabase"))
+    if config.trading_halted:
+        kept.append(k.HaltStatus(True, "SKOPAQ_TRADING_HALTED is set", "", "env"))
+except Exception as exc:
+    print("UNREADABLE %s: %s" % (type(exc).__name__, " ".join(str(exc).split())))
+    sys.exit()
+if kept:
+    print("KEPT " + kept[0].describe())
+elif lifted:
+    after = k.status(use_cache=False)
+    print("RESUMED" if not after.halted else "STILL " + after.describe())
+else:
+    print("NOT_HALTED")
+' "$PROBE_REASON" 2>&1 | tail -n 1)"
+    case "$RESUMED" in
+        RESUMED) pass "kill-switch probe" "resumed" ;;
+        NOT_HALTED) warn "kill-switch probe" "the probe's halt was already gone (someone resumed trading meanwhile)" ;;
+        KEPT*) warn "kill-switch probe" "not resumed: a halt set while the probe ran stays in place (${RESUMED#KEPT }); the probe lifts only its own; lift that one with skopaq resume when intended" ;;
+        *) fail "kill-switch probe" "resume failed ($RESUMED): if no one else halted trading, run docker compose exec api skopaq resume --yes" ;;
+    esac
+}
+
 if [ "$PROBE" = 1 ]; then
     WINDOW="$(in_svc scheduler python -c '
 from datetime import time
@@ -408,24 +506,7 @@ print("BUSY" if busy and time(9, 0) <= now.time() < time(15, 45) else "QUIET")
     if [ "$WINDOW" != QUIET ] && [ "$FORCE" != 1 ]; then
         warn "kill-switch probe" "skipped: trading day 09:00-15:45 IST (or unknown); rerun outside market hours or add --force"
     else
-        HALT_OUT="$(in_svc api python -m skopaq.cli.main halt 'verify.sh probe' 2>&1)"
-        SEEN="$(in_svc scheduler python -c '
-from skopaq.execution import kill_switch
-print(kill_switch.status(use_cache=False).describe())
-' 2>&1 | tail -n 1)"
-        case "$SEEN" in
-            *HALTED*) pass "kill-switch probe" "the scheduler sees the halt set in api" ;;
-            *) fail "kill-switch probe" "the scheduler does not see the halt: $SEEN" ;;
-        esac
-        case "$HALT_OUT" in
-            *supabase:system_flags*) pass "kill-switch probe" "recorded in Supabase" ;;
-            *) warn "kill-switch probe" "not recorded in Supabase (only this host is halted)" ;;
-        esac
-        if in_svc api python -m skopaq.cli.main resume --yes >/dev/null 2>&1; then
-            pass "kill-switch probe" "resumed"
-        else
-            fail "kill-switch probe" "resume failed: run docker compose exec api skopaq resume --yes"
-        fi
+        probe_kill_switch
     fi
 fi
 
