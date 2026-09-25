@@ -159,14 +159,11 @@ def test_kite_login_url_comes_from_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_login_without_a_public_url_says_so(allow, monkeypatch):
-    import sys
-    import types
-
     monkeypatch.setenv("SKOPAQ_PUBLIC_BASE_URL", "")
     update = _update(111)
-    kite = types.ModuleType("skopaq.broker.kite_client")  # kiteconnect is a deploy extra
-    kite.get_access_token = lambda: ""
-    monkeypatch.setitem(sys.modules, "skopaq.broker.kite_client", kite)
+    # Not a sys.modules stub: `import skopaq.broker.kite_client as kite` finds an already
+    # imported real module through the package attribute and would read its token file.
+    monkeypatch.setattr(telegram_bot, "_kite_token", lambda: "")
 
     await telegram_bot.cmd_login(update, MagicMock())
     assert "SKOPAQ_PUBLIC_BASE_URL" in update.message.reply_text.await_args.args[0]
