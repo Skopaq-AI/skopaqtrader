@@ -128,9 +128,13 @@ def halt(reason: str, by: str = "") -> list[str]:
     }
     written = []
     path = halt_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record), encoding="utf-8")
-    written.append(str(path))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        written.append(str(path))
+    except OSError:
+        # e.g. an unwritable volume: the Supabase row below can still halt everyone
+        logger.error("Could not write the halt file %s", path, exc_info=True)
     try:
         flags = _flags(_config())
         if flags is not None:
@@ -140,6 +144,10 @@ def halt(reason: str, by: str = "") -> list[str]:
         logger.warning("Halt not recorded in Supabase — only this machine is halted",
                        exc_info=True)
     _cache = None
+    if not written:
+        raise RuntimeError(
+            f"Halt not recorded: could not write {path} and Supabase is not configured or failed"
+        )
     logger.warning("TRADING HALTED by %s: %s", by or "unknown", reason)
     return written
 

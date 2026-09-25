@@ -195,3 +195,43 @@ def test_mcp_halt_and_resume(halt_file):
 
     resumed = json.loads(asyncio.run(mcp_server.resume_trading()))
     assert resumed["halted"] is False
+
+
+# ── Halt when the local file cannot be written ───────────────────────────────
+
+
+def _unwritable(monkeypatch):
+    """Path.write_text raises, as on a read-only volume (works as root too)."""
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(kill_switch.Path, "write_text", refuse)
+
+
+def test_halt_still_reaches_supabase_when_the_file_is_unwritable(halt_file, monkeypatch):
+    flags = FakeFlags()
+    monkeypatch.setattr(kill_switch, "_flags", lambda config: flags)
+    _unwritable(monkeypatch)
+
+    assert kill_switch.halt("volume read-only", by="test") == ["supabase:system_flags"]
+    key, value = flags.writes[0]
+    assert (key, value["halted"], value["reason"]) == ("trading_halt", True, "volume read-only")
+
+
+def test_halt_recorded_nowhere_raises(halt_file, monkeypatch):
+    monkeypatch.setattr(kill_switch, "_flags", lambda config: None)
+    _unwritable(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="Halt not recorded"):
+        kill_switch.halt("nowhere", by="test")
+
+
+def test_cli_halt_recorded_nowhere_exits_1(halt_file, monkeypatch):
+    from skopaq.cli.main import app
+
+    monkeypatch.setattr(kill_switch, "_flags", lambda config: None)
+    _unwritable(monkeypatch)
+
+    result = CliRunner().invoke(app, ["halt", "nowhere"])
+    assert result.exit_code == 1
+    assert "Halt not recorded" in result.output

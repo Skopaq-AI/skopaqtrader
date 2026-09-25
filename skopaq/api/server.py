@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from skopaq import __version__
+from skopaq.api.auth import cors_origins, require_api_token
 from skopaq.broker.token_manager import TokenManager
 from skopaq.config import SkopaqConfig
 
@@ -24,11 +25,14 @@ app = FastAPI(
     docs_url="/docs",
 )
 
-# CORS — allow frontend (Vercel) to call the API
+# CORS — browser origins allowed to call the API (SKOPAQ_CORS_ORIGINS; default "*"
+# keeps the Vercel frontend working). The API uses no cookies, so credentials are
+# only allowed with an explicit origin list, never echoed to any site.
+_origins = cors_origins(SkopaqConfig())
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -93,12 +97,13 @@ async def kite_status():
     }
 
 
-@app.get("/api/kite/token")
+@app.get("/api/kite/token", dependencies=[Depends(require_api_token)])
 async def kite_token():
     """Return the Kite access token (for internal service-to-service use).
 
     The Telegram bot fetches this to share the Kite session established
-    via the API app's OAuth login flow.
+    via the API app's OAuth login flow. Needs ``Authorization: Bearer
+    <SKOPAQ_API_TOKEN>`` when that is set.
     """
     from skopaq.broker.kite_client import get_access_token
 
@@ -156,8 +161,8 @@ async def kite_postback(request: Request):
 async def health() -> dict:
     """Health check endpoint (used by Railway)."""
     config = SkopaqConfig()
-    token_mgr = TokenManager()
-    health = token_mgr.get_health()
+    # notify=False: the compose health check polls this every 30 s; a probe sends no Telegram.
+    health = TokenManager().get_health(notify=False)
 
     return {
         "status": "ok",
@@ -172,8 +177,7 @@ async def health() -> dict:
 async def system_status() -> dict:
     """Detailed system status for the dashboard."""
     config = SkopaqConfig()
-    token_mgr = TokenManager()
-    token_health = token_mgr.get_health()
+    token_health = TokenManager().get_health(notify=False)  # a status read sends no Telegram
 
     return {
         "version": __version__,

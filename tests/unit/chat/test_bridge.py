@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from skopaq.api.auth import require_api_token
 from skopaq.chat.bridge import _sessions, router
 
 
@@ -17,6 +18,8 @@ def client():
 
     app = FastAPI()
     app.include_router(router)
+    # A developer .env with SKOPAQ_API_TOKEN must not fail these tests (tests/unit/api covers auth).
+    app.dependency_overrides[require_api_token] = lambda: None
     return TestClient(app)
 
 
