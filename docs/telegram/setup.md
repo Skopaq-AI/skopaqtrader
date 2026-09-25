@@ -132,6 +132,7 @@ fly volumes create skopaq_data --region bom --size 1 -a skopaq-telegram
 ```
 
 The Kite access token is persisted to `/data/skopaq_kite_token.json` so it survives restarts.
+It is used until 06:00 IST the next day, when Kite expires it; the 09:00 job then sends the login link again.
 
 ## Deploying with Docker
 

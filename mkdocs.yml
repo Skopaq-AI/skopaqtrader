@@ -74,6 +74,7 @@ nav:
     - Ollama Local Models: architecture/ollama.md
     - Notifications: architecture/notifications.md
   - Deployment:
+    - Mac mini (Docker): deployment/mac-mini.md
     - Docker: deployment/docker.md
     - Fly.io: deployment/flyio.md
   - Contributing:

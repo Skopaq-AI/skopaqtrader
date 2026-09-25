@@ -9,6 +9,16 @@ SkopaqTrader runs on [Fly.io](https://fly.io/) with two apps: the API server and
 | `skopaq-trader` | FastAPI backend (REST API + Kite OAuth) | `fly.toml` | HTTP service |
 | `skopaq-telegram` | Telegram bot (polling + scheduled jobs) | `fly-telegram.toml` | Background worker |
 
+Both apps build the shared root `Dockerfile` (non-root uid 1000, `WORKDIR /home/skopaq`,
+`TZ=Asia/Kolkata`). `fly.toml` sets `SKOPAQ_PUBLIC_BASE_URL` (the Kite login link the bot
+sends); `fly-telegram.toml` also sets `SKOPAQ_API_BASE_URL`, so the bot fetches the Kite
+token from the API app. If you set `SKOPAQ_API_TOKEN` on the API app, set the same value
+as a secret on the bot.
+
+!!! tip "Moving to a Mac mini"
+    When the [Mac mini stack](mac-mini.md) takes over, stop the Fly bot first
+    (`fly scale count 0 -a skopaq-telegram`): only one process may poll a bot token.
+
 ## Initial Setup
 
 ### Step 1: Install Fly CLI
@@ -44,6 +54,14 @@ Volumes persist data across deploys (Kite tokens, logs):
 ```bash
 fly volumes create skopaq_data --region bom --size 1 -a skopaq-trader
 fly volumes create skopaq_data --region bom --size 1 -a skopaq-telegram
+```
+
+Fly volumes mount root-owned, and the image runs as uid 1000. Run this once per app
+after the first deploy, or the Kite token file cannot be saved to `/data`:
+
+```bash
+fly ssh console -a skopaq-trader -C 'chown 1000:1000 /data'
+fly ssh console -a skopaq-telegram -C 'chown 1000:1000 /data'
 ```
 
 ### Step 5: Set Secrets
@@ -87,6 +105,7 @@ primary_region = 'bom'
 
 [env]
   PYTHONUNBUFFERED = '1'
+  SKOPAQ_PUBLIC_BASE_URL = 'https://skopaq-trader.fly.dev'
 
 [http_service]
   internal_port = 8000
@@ -129,6 +148,8 @@ primary_region = 'bom'
 
 [env]
   PYTHONUNBUFFERED = '1'
+  SKOPAQ_PUBLIC_BASE_URL = 'https://skopaq-trader.fly.dev'
+  SKOPAQ_API_BASE_URL = 'https://skopaq-trader.fly.dev'
 
 [processes]
   app = "telegram"
@@ -218,7 +239,7 @@ Rough monthly estimates (Fly.io shared-cpu pricing):
 | Issue | Solution |
 |-------|----------|
 | Deploy fails | Check `fly logs` for build errors |
-| Token not persisting | Verify volume is mounted (`fly ssh console` then `ls /data`) |
+| Token not persisting | Verify volume is mounted (`fly ssh console` then `ls -ld /data`) and owned by uid 1000 (see Step 4) |
 | Kite login fails | Verify redirect URL matches in Kite developer console |
 | Bot not responding | Check `fly status -a skopaq-telegram` and logs |
 | Out of memory | Scale up: `fly scale memory 2048 -a skopaq-trader` |
