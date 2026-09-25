@@ -6,6 +6,9 @@ primary_region = 'bom'  # Mumbai — closest to NSE
 
 [env]
   PYTHONUNBUFFERED = '1'
+  # Kite login links (Telegram). Never set SKOPAQ_API_BASE_URL here: the API would
+  # fetch its own token from itself.
+  SKOPAQ_PUBLIC_BASE_URL = 'https://skopaq-trader.fly.dev'
 
 [http_service]
   internal_port = 8000
