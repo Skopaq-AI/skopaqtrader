@@ -38,15 +38,44 @@ The scheduler (`skopaq schedule`, `skopaq/execution/scheduler.py`):
   `skopaq monitor` until 15:45, so the open delivery (CNC) positions keep their
   stop-loss and the 15:20 EOD exit instead of being carried overnight unmanaged. Paper
   positions of that session are gone (the paper engine keeps them in memory). The same
-  recovery runs when the session exits non-zero on its own before 15:45 (an error, or
-  an OOM kill of the session alone); the daemon also runs its CLOSING phase when it fails
-  after opening trades;
+  recovery runs when the session exits non-zero on its own before 15:45 (the session
+  failed, or an OOM kill of the session alone); the daemon also runs its CLOSING phase
+  when it fails after opening trades;
+- tracks that recovery monitor across restarts too. Unlike the daemon, `skopaq monitor`
+  does not sell when it is stopped before the 15:20 EOD exit, so a restart or
+  `docker compose up -d` during it leaves positions unmanaged: you get an alert, and a
+  scheduler that is back before 15:45 alerts again and runs the monitor again (the same
+  after a power cut during it, or when it had to be killed). Stopped from 15:20 on, it
+  sells what is left as it exits, so it counts as done. Found after 15:45 or on a later
+  day, it alerts to check open positions at the broker. A monitor that cannot be started
+  (e.g. out of memory) is alerted once and retried every poll until 15:45;
 - sends SIGTERM to a session still running at **15:45** (the daemon then closes its
-  positions) and SIGKILL 5 minutes later;
+  positions) and SIGKILL 5 minutes later. A session that has to be SIGKILLed may not
+  have finished CLOSING: the alert says to check the broker, and in live mode a kill after a
+  scheduler stop (not the deadline) counts as an interrupted session, so the restarted
+  scheduler runs `skopaq monitor` until 15:45;
+- runs only once per state directory: it holds a lock on `scheduler/scheduler.lock` for
+  as long as it runs. A second scheduler on the same volume (`docker compose run
+  scheduler`, or `skopaq schedule` without `--check` inside the container) exits 1
+  instead of taking the running session for an interrupted one, alerting once a day (a
+  restart policy runs it again and again). `skopaq schedule --check` takes no lock;
 - runs `skopaq settle` at **18:30** as a backstop;
 - alerts on Telegram (`SKOPAQ_TELEGRAM_CHAT_ID`) when a session fails, a day is
-  missed or the holiday list for the year is missing, and can ping a dead-man's
-  switch (`SKOPAQ_SCHEDULER_PING_URL`).
+  missed, the holiday list for the year is missing or the session log cannot be written
+  (disk full: the session keeps running and its output still reaches
+  `docker compose logs scheduler`), and can ping a dead-man's switch
+  (`SKOPAQ_SCHEDULER_PING_URL`).
+
+`skopaq daemon` exits 0 when the session ran, 3 when PRE_OPEN failed (nothing traded,
+retried until 11:30) and 1 only when the session itself failed (an exception ended it).
+A candidate whose analysis failed (an LLM rate limit, a data error) is listed in the
+session report but does not fail the session, so it causes no failure alert, failed ping
+or recovery monitor.
+
+A mistyped `SKOPAQ_SCHEDULER_*` value stops only the scheduler (with an alert once a day;
+`api` and `telegram` keep running). A `SKOPAQ_SCHEDULER_CONFIRM_LIVE` other than
+true/false (or yes/no, on/off, 1/0) counts as not confirmed: live sessions are skipped
+and alerted, naming the value.
 
 The position monitor is not scheduled separately: it runs inside each daemon session
 (MONITORING phase) and exits at 15:20 IST.
@@ -59,7 +88,7 @@ State lives in two named volumes, shared by every container:
 | `skopaq-home` | `/home/skopaq/.skopaq/HALT` | kill-switch file |
 | `skopaq-home` | `/home/skopaq/.tradingagents/` | decision log (settled by `skopaq settle`) |
 | `skopaq-home` | `/home/skopaq/results/`, `/home/skopaq/.cache/` | analysis reports, data cache |
-| `skopaq-home` | `/home/skopaq/scheduler/` | scheduler markers (`daemon-YYYY-MM-DD.started`, `.rc`) |
+| `skopaq-home` | `/home/skopaq/scheduler/` | scheduler markers (`daemon-YYYY-MM-DD.started`, `.rc`, `monitor-…` for the recovery monitor) and `scheduler.lock` |
 | `skopaq-home` | `/home/skopaq/logs/daemon/` | one log per session (`daemon-YYYY-MM-DD.log`, kept 60 days) |
 | `skopaq-data` | `/data/skopaq_kite_token.json` | Kite access token (written by `api`, read by `telegram`) |
 
@@ -137,14 +166,17 @@ Minimum `.env`: an LLM key (`SKOPAQ_GOOGLE_API_KEY`), the Supabase URL and servi
 |---------|--------------|
 | `scripts/macmini/verify.sh` | host, configuration and stack checks |
 | `scripts/macmini/verify.sh --build --up` | build and start first |
-| `scripts/macmini/verify.sh --probe-kill-switch` | halt in `api`, check the scheduler sees it, resume |
+| `scripts/macmini/verify.sh --probe-kill-switch` | halt in `api`, check the scheduler sees it, lift the probe's own halt |
 | `scripts/macmini/verify.sh --unit-tests` | run `tests/unit` inside the image, without `.env` or the stack's volumes |
 | `scripts/macmini/verify.sh --dry-run-daemon` | a scan-only session now (makes LLM calls) |
 
 Each line is `PASS`, `WARN`, `FAIL` or `INFO`; the script exits 1 if anything FAILs and
 never prints secret values. Fix every FAIL. The kill-switch probe refuses to run on a
-trading day between 09:00 and 15:45 IST unless you add `--force`. Expected output
-(abridged):
+trading day between 09:00 and 15:45 IST unless you add `--force`, and is skipped (WARN)
+while trading is already halted, so it never lifts a halt it did not set; a halt set while
+it runs is left in place too (the probe lifts only its own). It is also skipped (FAIL)
+when Supabase is configured but cannot be read, since it could not see a halt set there.
+Expected output (abridged):
 
 ```text
 PASS  host: macOS on Apple Silicon (arm64)
@@ -189,7 +221,8 @@ Manual checks:
 1. Paper-trade for at least one week and review the results (`skopaq report`).
 2. Confirm the egress IP is whitelisted (verify.sh `egress IP` is PASS).
 3. Set `SKOPAQ_SCHEDULER_MODE=live` and `SKOPAQ_SCHEDULER_CONFIRM_LIVE=true` in `.env`.
-   Without the confirmation the scheduler starts no sessions and alerts instead.
+   Without the confirmation (or with a value that is not true/false) the scheduler starts
+   no sessions and alerts instead.
 4. Outside 09:15–15:45 IST: `docker compose up -d scheduler`.
 
 ## 9. Updates
@@ -199,7 +232,10 @@ git pull && docker compose build && docker compose up -d
 ```
 
 Only outside 09:15–15:45 IST on trading days. Recreating the scheduler during a session
-sends it SIGTERM, and the daemon's CLOSING phase sells every open position.
+sends it SIGTERM, and the daemon's CLOSING phase sells every open position (a session
+still running 5 minutes later is killed; in live mode the new scheduler then runs
+`skopaq monitor` until 15:45). During a recovery `skopaq monitor` a recreate leaves the
+positions unmanaged until the new scheduler starts it again.
 
 ## 10. Holidays
 
@@ -303,7 +339,13 @@ run `docker system prune -f && docker builder prune -f` monthly.
 | No session on a weekday | `schedule --check`: holiday, missing holiday list, live not confirmed, or `SKOPAQ_SCHEDULER_ENABLED=false` |
 | Alert "PRE_OPEN failed" or "pre-flight" | Usually the INDstocks token: set it; the session is retried every 5 min until 11:30 |
 | Alert "session ... was interrupted" | The Mac or Docker died mid-session. Check open positions at the broker (in live mode the scheduler runs `skopaq monitor` until 15:45) |
-| Alert "daemon exited rc=N" | The session failed or was killed: read `logs/daemon/daemon-<date>.log`. In live mode before 15:45 the scheduler runs `skopaq monitor` until 15:45; otherwise check open positions at the broker |
+| Alert "daemon exited rc=N" | The session itself failed or was killed (a failed candidate analysis alone exits 0): read `logs/daemon/daemon-<date>.log`. In live mode before 15:45 the scheduler runs `skopaq monitor` until 15:45; otherwise check open positions at the broker |
+| Alert "did not stop within 300s ... was killed" | The session ignored SIGTERM (e.g. mid-analysis), so CLOSING may not have finished. Check open positions at the broker; in live mode a scheduler back before 15:45 runs `skopaq monitor` |
+| Alert "recovery `skopaq monitor` ... was stopped" or "... was cut off" | The scheduler stopped or died during the recovery monitor. Before 15:45 the restarted scheduler runs it again; otherwise check open positions at the broker |
+| Alert "could not run the recovery `skopaq monitor`" | Launching it failed (out of memory, process limit). Check open positions at the broker; the scheduler retries every poll until 15:45 without further alerts |
+| Alert "another scheduler is already running" | A second scheduler was started on the same volume (`docker compose run scheduler`, or `skopaq schedule` without `--check`). It exited; the running one carries on (sent once a day) |
+| Alert "not running: Invalid scheduler configuration" | Fix the named `SKOPAQ_SCHEDULER_*` value in `.env`, then `docker compose up -d scheduler`. `api` and `telegram` are not affected |
+| Alert "the session log failed" | Usually a full disk: free space (Docker Desktop's disk image, `docker system prune`). The session keeps running; its output is in `docker compose logs scheduler` |
 | Native MCP quotes come from INDstocks, not Kite | Section 13: `SKOPAQ_API_BASE_URL` in the MCP server's `env` block |
 
 ## 16. Services and host requirements

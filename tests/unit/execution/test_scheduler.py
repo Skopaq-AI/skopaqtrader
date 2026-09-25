@@ -4,7 +4,10 @@ the main loop with an injected clock, and signal/deadline handling of a real chi
 from __future__ import annotations
 
 import dataclasses
+import errno
+import os
 import signal
+import subprocess
 import sys
 import threading
 import time as _time
@@ -56,6 +59,7 @@ def _config(tmp_path: Path, **overrides) -> SimpleNamespace:
         scheduler_ping_url="",
         heartbeat_file="",
         nse_holidays="",
+        monitor_eod_exit_minutes_before_close=10,
     )
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -115,6 +119,65 @@ def test_daemon_argv(tmp_path):
     live = _settings(tmp_path, scheduler_mode="live", scheduler_confirm_live=True)
     assert daemon_argv(live) == ["daemon", "--once", "--live", "--confirm-live"]
     assert daemon_argv(_settings(tmp_path, scheduler_mode="live")) is None
+
+
+def test_from_config_parses_the_plain_string_settings(tmp_path):
+    settings = _settings(
+        tmp_path, scheduler_enabled="FALSE", scheduler_mode="live",
+        scheduler_confirm_live="yes", scheduler_poll_seconds="5",
+        scheduler_kill_after_seconds=" 60 ",
+    )
+    assert settings.enabled is False
+    assert settings.confirm_live is True
+    assert settings.poll_seconds == 5
+    assert settings.kill_after_seconds == 60
+    assert settings.eod_exit == time(15, 20)  # 10 min before the close, like the monitor
+
+
+def test_from_config_rejects_bad_enabled_and_seconds(tmp_path):
+    with pytest.raises(ValueError) as exc:
+        _settings(tmp_path, scheduler_enabled="flase", scheduler_poll_seconds="30s",
+                  scheduler_kill_after_seconds="0")
+    message = str(exc.value)
+    assert "SKOPAQ_SCHEDULER_ENABLED" in message
+    assert "SKOPAQ_SCHEDULER_POLL_SECONDS" in message
+    assert "SKOPAQ_SCHEDULER_KILL_AFTER_SECONDS" in message
+
+
+def test_from_config_reads_seconds_as_the_int_fields_did(tmp_path):
+    settings = _settings(tmp_path, scheduler_poll_seconds="30.0",
+                         scheduler_kill_after_seconds="300.0")
+    assert (settings.poll_seconds, settings.kill_after_seconds) == (30, 300)
+    for bad in ("30.5", "3e1", "", "thirty"):
+        with pytest.raises(ValueError, match="whole number of seconds"):
+            _settings(tmp_path, scheduler_poll_seconds=bad)
+
+
+def test_bad_scheduler_values_do_not_stop_the_other_services(monkeypatch):
+    from skopaq.config import SkopaqConfig
+
+    for var, value in (("SKOPAQ_SCHEDULER_CONFIRM_LIVE", "ture"),
+                       ("SKOPAQ_SCHEDULER_ENABLED", "flase"),
+                       ("SKOPAQ_SCHEDULER_POLL_SECONDS", "30s"),
+                       ("SKOPAQ_SCHEDULER_KILL_AFTER_SECONDS", "5m")):
+        monkeypatch.setenv(var, value)
+    config = SkopaqConfig()  # what api and telegram build at startup: still loads
+    with pytest.raises(ValueError) as exc:  # only the scheduler refuses
+        ScheduleSettings.from_config(config)
+    assert "SKOPAQ_SCHEDULER_ENABLED" in str(exc.value)
+    assert "CONFIRM_LIVE" not in str(exc.value)  # not confirmed: skip and alert instead
+
+
+def test_a_mistyped_confirm_live_skips_the_session_and_says_why(tmp_path):
+    settings = _settings(tmp_path, scheduler_mode="live", scheduler_confirm_live="ture")
+    assert settings.confirm_live is False
+    assert daemon_argv(settings) is None
+    state, rec, runs = SchedulerState(settings.state_dir), Recorder(), Runs()
+    _tick_at(settings, state, MONDAY, "09:16", rec, runs)
+    assert runs.calls == []
+    assert len(rec.alerts) == 1
+    assert "CONFIRM_LIVE" in rec.alerts[0] and "'ture'" in rec.alerts[0]
+    assert "'ture'" in "\n".join(describe(settings, _at(MONDAY, "09:20"), state))
 
 
 # ── Due jobs and markers ─────────────────────────────────────────────────────
@@ -332,6 +395,131 @@ def test_run_forever_runs_settle(tmp_path):
     assert rec.alerts == []
 
 
+def test_a_second_scheduler_never_runs_beside_the_first(tmp_path):
+    """Scheduler A runs today's live session; B on the same state dir (docker compose run
+    scheduler, or `skopaq schedule` without --check) must not take it for an interrupted
+    session and start `skopaq monitor` beside it."""
+    settings = _live(tmp_path)
+    in_session, release, stop_a = threading.Event(), threading.Event(), threading.Event()
+
+    def runner_a(cmd, **kwargs):
+        in_session.set()
+        release.wait(20)
+        return JobResult(0)
+
+    first = threading.Thread(target=run_forever, args=(settings,), daemon=True, kwargs=dict(
+        clock=lambda: _at(MONDAY, "09:20"), runner=runner_a, alert=lambda msg: None,
+        ping=lambda url, ok: None, sleep=_stop_after(stop_a, 1), stop=stop_a,
+    ))
+    first.start()
+    assert in_session.wait(20)
+
+    rec, runs, stop_b = Recorder(), Runs(), threading.Event()
+    rc = run_forever(
+        settings, clock=lambda: _at(MONDAY, "09:21"), runner=runs,
+        alert=rec.alert, ping=rec.ping, sleep=_stop_after(stop_b, 1), stop=stop_b,
+    )
+    release.set()
+    first.join(20)
+
+    assert runs.calls == []  # no `skopaq monitor` beside the running session
+    assert len(rec.alerts) == 1 and "another scheduler is already running" in rec.alerts[0]
+    assert rc == 1
+
+
+def test_the_scheduler_lock_is_released_on_exit(tmp_path):
+    settings = _settings(tmp_path)
+    for _ in range(2):
+        stop = threading.Event()
+        rc = run_forever(
+            settings, clock=lambda: _at(SATURDAY, "10:00"), runner=Runs(),
+            alert=lambda msg: None, ping=lambda url, ok: None, sleep=_stop_after(stop, 1),
+            stop=stop,
+        )
+        assert rc == 0
+    assert (settings.state_dir / "scheduler.lock").exists()  # kept; only the flock matters
+
+
+def test_the_scheduler_lock_needs_no_write_access(tmp_path, monkeypatch):
+    """A lock file another user left (a scheduler once run as root) is readable only."""
+    lock_file = tmp_path / "scheduler.lock"
+    lock_file.touch()
+    lock_file.chmod(0o444)
+    if os.geteuid() == 0:  # root may write anyway: refuse write access as for anyone else
+        def denied(path):
+            return PermissionError(errno.EACCES, "Permission denied", str(path))
+
+        def os_open(path, flags, *args, **kwargs):
+            if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND):
+                raise denied(path)
+            return real_os_open(path, flags, *args, **kwargs)
+
+        def builtin_open(path, mode="r", *args, **kwargs):
+            if set(mode) & set("wax+"):
+                raise denied(path)
+            return open(path, mode, *args, **kwargs)
+
+        real_os_open = os.open
+        monkeypatch.setattr(scheduler.os, "open", os_open)
+        monkeypatch.setattr(scheduler, "open", builtin_open, raising=False)
+
+    held = scheduler._lock(tmp_path)
+    assert held is not None
+    try:
+        assert scheduler._lock(tmp_path) is None  # and it still keeps a second one out
+    finally:
+        os.close(held)
+
+
+@pytest.mark.parametrize("why", ["held", "no locks"])
+def test_a_scheduler_that_cannot_take_the_lock_alerts_once_a_day(tmp_path, monkeypatch, why):
+    """Docker's restart policy runs the losing scheduler again and again."""
+    settings = _settings(tmp_path)
+    settings.state_dir.mkdir(parents=True)
+    held = scheduler._lock(settings.state_dir) if why == "held" else None
+    if why == "no locks":  # e.g. a filesystem without flock
+        def no_flock(fd, op):
+            raise OSError(errno.ENOLCK, "No locks available")
+
+        monkeypatch.setattr(scheduler.fcntl, "flock", no_flock)
+    rec, rcs = Recorder(), []
+    try:
+        for day in (SATURDAY, SATURDAY, SATURDAY, (2026, 9, 27)):
+            rcs.append(run_forever(
+                settings, clock=lambda: _at(day, "10:00"), runner=Runs(), alert=rec.alert,
+                ping=rec.ping, sleep=_stop_after(threading.Event(), 1),
+                stop=threading.Event(),
+            ))
+    finally:
+        if held is not None:
+            os.close(held)
+    assert rcs == [1, 1, 1, 1]
+    assert len(rec.alerts) == 2  # Saturday once, Sunday once
+    expected = "another scheduler is already running" if why == "held" else "cannot lock"
+    assert all(expected in msg for msg in rec.alerts)
+
+
+def test_the_lock_alert_goes_out_every_time_without_a_writable_state_dir(tmp_path,
+                                                                          monkeypatch):
+    settings = _settings(tmp_path)
+    settings.state_dir.mkdir(parents=True)
+    held = scheduler._lock(settings.state_dir)
+
+    def unwritable(self, key, day):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(SchedulerState, "flag_once", unwritable)
+    rec = Recorder()
+    try:
+        for _ in range(2):
+            run_forever(settings, clock=lambda: _at(SATURDAY, "10:00"), runner=Runs(),
+                        alert=rec.alert, ping=rec.ping,
+                        sleep=_stop_after(threading.Event(), 1), stop=threading.Event())
+    finally:
+        os.close(held)
+    assert len(rec.alerts) == 2
+
+
 def test_disabled_scheduler_keeps_the_heartbeat(tmp_path):
     heartbeat = tmp_path / "hb"
     settings = _settings(tmp_path, scheduler_enabled=False, heartbeat_file=str(heartbeat))
@@ -398,6 +586,21 @@ def test_interrupted_live_session_runs_the_monitor_until_the_deadline(tmp_path):
     assert len(rec.alerts) == 1 and "running `skopaq monitor`" in rec.alerts[0]
     assert state.last_exit("daemon", MONDAY_DATE) == INTERRUPTED_RC
     assert state.last_exit("monitor", MONDAY_DATE) == 0
+
+
+@pytest.mark.parametrize("confirm", ["ture", False])
+def test_interrupted_session_with_live_unconfirmed_says_check_the_broker(tmp_path, confirm):
+    """MODE=live without a valid CONFIRM_LIVE is not paper: the positions may be real."""
+    settings = _settings(tmp_path, scheduler_mode="live", scheduler_confirm_live=confirm)
+    state, rec, runs = _interrupted(settings), Recorder(), Runs()
+    _tick_at(settings, state, MONDAY, "10:30", rec, runs)
+    assert runs.calls == []
+    assert len(rec.alerts) == 1
+    alert = rec.alerts[0]
+    assert "CONFIRM_LIVE" in alert and "check open positions at the broker" in alert
+    assert "Paper mode" not in alert
+    if confirm == "ture":
+        assert "'ture'" in alert
 
 
 def test_interrupted_live_session_after_the_deadline_is_only_alerted(tmp_path):
@@ -559,6 +762,314 @@ def test_live_session_stopped_by_the_scheduler_gets_no_monitor(tmp_path, result)
     assert len(rec.alerts) == 1 and "rc=-15" in rec.alerts[0]
 
 
+def test_live_session_killed_after_the_stop_grace_is_recovered_after_a_restart(tmp_path):
+    """The scheduler is stopped mid-session (container recreate) while the daemon is stuck in
+    a synchronous call and ignores SIGTERM: it is SIGKILLed, so CLOSING never ran."""
+    settings = dataclasses.replace(_live(tmp_path), kill_after_seconds=1)
+    state, rec, stop = SchedulerState(settings.state_dir, settings.log_dir), Recorder(), \
+        threading.Event()
+    _when_started(settings.log_dir / "daemon-2026-09-28.log", stop.set)
+
+    def runner(cmd, **kwargs):  # the real run_job, with a daemon that ignores SIGTERM
+        return run_job([sys.executable, "-c", STUBBORN], **kwargs)
+
+    now = _at(MONDAY, "09:15")
+    _tick(now, settings, state, runner=runner, alert=rec.alert, ping=rec.ping, stop=stop,
+          clock=lambda: now)
+
+    assert state.last_exit("daemon", MONDAY_DATE) is None  # not a clean stop
+    assert len(rec.alerts) == 1
+    assert "killed" in rec.alerts[0] and "check open positions at the broker" in rec.alerts[0]
+    assert rec.pings == [False]
+
+    restarted, runs = Recorder(), Runs()
+    _tick_at(settings, SchedulerState(settings.state_dir, settings.log_dir), MONDAY, "10:05",
+             restarted, runs)
+    assert [args for args, _ in runs.calls] == [["monitor"]]
+    assert runs.calls[0][1]["env"] == {"SKOPAQ_TRADING_MODE": "live"}
+    assert len(restarted.alerts) == 1 and "interrupted" in restarted.alerts[0]
+
+
+def test_live_session_killed_after_the_deadline_grace_says_check_the_broker(tmp_path):
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, calls, clock = _session_ending_at(
+        "15:51", JobResult(-9, deadline_hit=True, killed=True))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    assert [args[0] for args, _ in calls] == ["daemon"]
+    assert len(rec.alerts) == 1
+    assert "15:45 deadline" in rec.alerts[0]
+    assert "check open positions at the broker" in rec.alerts[0]
+    assert state.last_exit("daemon", MONDAY_DATE) == -9
+
+
+def test_paper_session_killed_after_the_stop_grace_is_only_alerted(tmp_path):
+    settings = _settings(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, calls, clock = _session_ending_at("10:00", JobResult(-9, stopped=True, killed=True))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    assert state.last_exit("daemon", MONDAY_DATE) == -9  # nothing to recover in paper mode
+    assert len(rec.alerts) == 1 and "rc=-9" in rec.alerts[0]
+
+
+# ── The recovery monitor across scheduler stops and restarts ─────────────────
+
+
+def _script(*steps):
+    """A runner that plays *steps* in turn: (job, JobResult, wall clock HH:MM once it returns)."""
+    clock, calls, queue = {"now": None}, [], list(steps)
+
+    def runner(cmd, **kwargs):
+        job, result, ends = queue.pop(0)
+        assert cmd[3] == job
+        calls.append((cmd[3:], kwargs))
+        clock["now"] = _at(MONDAY, ends)
+        return result
+
+    return runner, calls, clock
+
+
+def _monitor_cut_off(settings) -> SchedulerState:
+    """Today's session exited rc=1 at 10:00 and the recovery monitor started then; the
+    scheduler process running it died (no monitor exit code)."""
+    state = SchedulerState(settings.state_dir, settings.log_dir)
+    state.mark_started("daemon", MONDAY_DATE, note="2026-09-28T09:15:02+05:30")
+    state.record_exit("daemon", MONDAY_DATE, 1)
+    state.mark_started("monitor", MONDAY_DATE, note="2026-09-28T10:00:00+05:30")
+    return state
+
+
+def test_a_recovery_monitor_stopped_with_the_scheduler_runs_again_after_a_restart(tmp_path):
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, calls, clock = _script(("daemon", JobResult(1), "10:00"),
+                                   ("monitor", JobResult(0, stopped=True), "11:00"))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    assert [args[0] for args, _ in calls] == ["daemon", "monitor"]
+    assert len(rec.alerts) == 2
+    assert "stopped" in rec.alerts[1] and "15:20 EOD exit" in rec.alerts[1]
+    assert "check open positions at the broker" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) is None  # the next process runs it again
+
+    restarted, again, runs = SchedulerState(settings.state_dir, settings.log_dir), Recorder(), \
+        Runs()
+    for hhmm in ("11:05", "11:06", "12:00"):
+        _tick_at(settings, restarted, MONDAY, hhmm, again, runs)
+    assert [args for args, _ in runs.calls] == [["monitor"]]  # once: never two monitors
+    _, kwargs = runs.calls[0]
+    assert kwargs["env"] == {"SKOPAQ_TRADING_MODE": "live"}
+    assert kwargs["deadline"] == _at(MONDAY, "15:45")
+    assert kwargs["log_path"] == settings.log_dir / "daemon-2026-09-28.log"
+    assert len(again.alerts) == 1 and "running it again" in again.alerts[0]
+    assert restarted.last_exit("monitor", MONDAY_DATE) == 0
+
+
+def test_a_recovery_monitor_whose_scheduler_died_runs_again_after_a_restart(tmp_path):
+    settings = _live(tmp_path)
+    state, rec, runs = _monitor_cut_off(settings), Recorder(), Runs()
+    for hhmm in ("11:05", "11:06"):
+        _tick_at(settings, state, MONDAY, hhmm, rec, runs)
+    assert [args for args, _ in runs.calls] == [["monitor"]]
+    assert runs.calls[0][1]["env"] == {"SKOPAQ_TRADING_MODE": "live"}
+    assert len(rec.alerts) == 1
+    assert "2026-09-28T10:00:00+05:30" in rec.alerts[0] and "running it again" in rec.alerts[0]
+    assert state.last_exit("monitor", MONDAY_DATE) == 0
+    assert state.last_exit("daemon", MONDAY_DATE) == 1
+
+
+@pytest.mark.parametrize(
+    ("live", "day", "hhmm"),
+    [(True, (2026, 9, 29), "08:50"),  # found the next morning
+     (True, MONDAY, "16:00"),  # found after the deadline
+     (False, MONDAY, "11:05")],  # the scheduler is back in paper mode
+)
+def test_a_cut_off_recovery_monitor_too_late_to_rerun_says_check_the_broker(
+        tmp_path, live, day, hhmm):
+    settings = _live(tmp_path) if live else _settings(tmp_path)
+    state, rec, runs = _monitor_cut_off(settings), Recorder(), Runs()
+    state.flag_once("preflight", date(*day))  # no token check here
+    _tick_at(settings, state, day, hhmm, rec, runs)
+    _tick_at(settings, state, day, hhmm, rec, runs)  # handled once
+    assert runs.calls == []
+    assert len(rec.alerts) == 1
+    assert "2026-09-28" in rec.alerts[0]
+    assert "check open positions at the broker" in rec.alerts[0]
+    assert state.last_exit("monitor", MONDAY_DATE) == INTERRUPTED_RC
+
+
+@pytest.mark.parametrize(("result", "ends"), [
+    (JobResult(0, deadline_hit=True), "15:45"),
+    (JobResult(0, stopped=True, stopped_at=_at(MONDAY, "15:25")), "15:25"),
+])
+def test_a_recovery_monitor_ending_at_the_deadline_or_after_the_eod_exit_is_not_alerted(
+        tmp_path, result, ends):
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, calls, clock = _script(("daemon", JobResult(1), "10:00"), ("monitor", result, ends))
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+    assert [args[0] for args, _ in calls] == ["daemon", "monitor"]
+    assert len(rec.alerts) == 1  # the session's failure only: the monitor sold at 15:20
+    assert state.last_exit("monitor", MONDAY_DATE) == 0  # done: not run again
+
+
+@pytest.mark.parametrize("restart", ["15:30", "15:50"])
+def test_a_recovery_monitor_stopped_after_the_eod_exit_is_not_run_again(tmp_path, restart):
+    """Stopped at 15:25 (container recreate): its shutdown sold what was left, so a restart
+    neither runs it again nor says nothing is managing the positions."""
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    stopped = JobResult(0, stopped=True, stopped_at=_at(MONDAY, "15:25"))
+    runner, _, clock = _script(("daemon", JobResult(1), "10:00"), ("monitor", stopped, "15:25"))
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    again, runs = Recorder(), Runs()
+    _tick_at(settings, SchedulerState(settings.state_dir, settings.log_dir), MONDAY, restart,
+             again, runs)
+    assert runs.calls == []
+    assert again.alerts == []
+
+
+@pytest.mark.parametrize(("result", "says"), [
+    # the SIGTERM went out at 15:19, before the monitor's EOD exit, though it exited later
+    (JobResult(0, stopped=True, stopped_at=_at(MONDAY, "15:19")), "before the 15:20 EOD exit"),
+    (JobResult(-9, stopped=True, killed=True, stopped_at=_at(MONDAY, "15:25")), "killed 300s"),
+    # SIGTERM before its handler was set (still starting): no shutdown, no EOD exit
+    (JobResult(-15, stopped=True, stopped_at=_at(MONDAY, "15:25")), "rc=-15"),
+])
+def test_a_recovery_monitor_stopped_without_its_eod_exit_runs_again_after_a_restart(
+        tmp_path, result, says):
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, _, clock = _script(("daemon", JobResult(1), "10:00"), ("monitor", result, "15:26"))
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+    assert len(rec.alerts) == 2
+    assert says in rec.alerts[1] and "check open positions at the broker" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) is None
+
+    again, runs = Recorder(), Runs()
+    _tick_at(settings, SchedulerState(settings.state_dir, settings.log_dir), MONDAY, "15:30",
+             again, runs)
+    assert [args for args, _ in runs.calls] == [["monitor"]]  # sells at once: past 15:20
+    assert len(again.alerts) == 1 and "running it again" in again.alerts[0]
+
+
+def _failing_monitor(clock, launches, fails):
+    """A runner: today's session exits rc=1 at 10:00; the first *fails* monitor launches
+    raise (fork: ENOMEM), a later one runs until the deadline."""
+    def runner(cmd, **kwargs):
+        launches.append(cmd[3])
+        if cmd[3] == "daemon":
+            clock["now"] = _at(MONDAY, "10:00")
+            return JobResult(1)
+        if launches.count("monitor") <= fails:
+            raise OSError(errno.ENOMEM, "Cannot allocate memory")
+        clock["now"] = _at(MONDAY, "15:45")
+        return JobResult(0, deadline_hit=True)
+
+    return runner
+
+
+def test_a_recovery_monitor_that_cannot_be_launched_is_retried_with_one_alert(tmp_path):
+    settings = _live(tmp_path)
+    state, rec, clock, launches = SchedulerState(settings.state_dir, settings.log_dir), \
+        Recorder(), {"now": None}, []
+    runner = _failing_monitor(clock, launches, fails=3)
+    for hhmm in ("09:15", "10:01", "10:02", "10:03", "10:04"):
+        _tick_session(settings, state, rec, runner, clock, hhmm)
+    assert launches == ["daemon"] + ["monitor"] * 4  # retried every poll until it ran
+    assert len(rec.alerts) == 2
+    assert "running `skopaq monitor`" in rec.alerts[0]
+    assert "could not run the recovery `skopaq monitor`" in rec.alerts[1]
+    assert "Cannot allocate memory" in rec.alerts[1]
+    assert "check open positions at the broker" in rec.alerts[1]
+    assert "Retrying every 1s until 15:45 IST" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) == 0
+
+
+@pytest.mark.parametrize("fault", ["launch", "state disk full"])
+def test_a_recovery_monitor_that_never_launches_does_not_flood_the_alerts(
+        tmp_path, monkeypatch, fault):
+    """run_forever from 09:15 to 16:00 (a clock one minute ahead per poll): the launch keeps
+    failing. Before: the same alert on every poll until 15:45."""
+    settings = _live(tmp_path)
+    clock, launches, rec, stop = {"now": _at(MONDAY, "09:15")}, [], Recorder(), \
+        threading.Event()
+    if fault == "state disk full":  # writing the .started marker again fails (ENOSPC)
+        real = SchedulerState.mark_started
+
+        def mark_started(self, job, day, note=""):
+            if job == "monitor" and self.started(job, day):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            real(self, job, day, note)
+
+        monkeypatch.setattr(SchedulerState, "mark_started", mark_started)
+
+    def sleep(_seconds):
+        clock["now"] += timedelta(minutes=1)
+        if clock["now"] >= _at(MONDAY, "16:00"):
+            stop.set()
+
+    run_forever(settings, clock=lambda: clock["now"],
+                runner=_failing_monitor(clock, launches, fails=10_000), alert=rec.alert,
+                ping=rec.ping, sleep=sleep, stop=stop)
+
+    if fault == "launch":
+        assert launches.count("monitor") == 345  # at 10:00, then every poll until 15:44
+    else:
+        assert launches.count("monitor") == 1
+    expected = ["running `skopaq monitor`", "could not run the recovery"]
+    if fault == "state disk full":
+        expected.append("scheduler error on 2026-09-28: [Errno 28]")  # once a day
+    expected.append("was cut off before it finished. LIVE: check open positions")  # 15:45
+    assert len(rec.alerts) == len(expected), rec.alerts
+    for msg, part in zip(rec.alerts, expected):
+        assert part in msg
+    assert SchedulerState(settings.state_dir).last_exit("monitor", MONDAY_DATE) == INTERRUPTED_RC
+
+
+def test_a_resumed_recovery_monitor_that_cannot_be_launched_alerts_once(tmp_path):
+    settings = _live(tmp_path)
+    state, rec = _monitor_cut_off(settings), Recorder()
+
+    def runner(cmd, **kwargs):
+        raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+
+    for hhmm in ("11:05", "11:06", "11:07", "12:00"):
+        _tick_at(settings, state, MONDAY, hhmm, rec, runner)
+    assert len(rec.alerts) == 2
+    assert "running it again" in rec.alerts[0] and "could not run" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) is None  # still retried
+
+    again = Recorder()  # a restarted scheduler says it again, once
+    restarted = SchedulerState(settings.state_dir, settings.log_dir)
+    for hhmm in ("12:01", "12:02"):
+        _tick_at(settings, restarted, MONDAY, hhmm, again, runner)
+    assert len(again.alerts) == 2
+
+
+def test_a_stop_during_the_recovery_monitor_starts_no_second_one(tmp_path):
+    settings = _live(tmp_path)
+    state, rec, stop, calls = _interrupted(settings), Recorder(), threading.Event(), []
+
+    def runner(cmd, **kwargs):  # the scheduler is stopped while the monitor runs
+        calls.append(cmd[3:])
+        stop.set()
+        return JobResult(0, stopped=True)
+
+    now = _at(MONDAY, "10:30")
+    _tick(now, settings, state, runner=runner, alert=rec.alert, ping=rec.ping, stop=stop,
+          clock=lambda: now)
+    assert calls == [["monitor"]]
+    assert state.last_exit("monitor", MONDAY_DATE) is None  # the next process runs it again
+    assert state.last_exit("daemon", MONDAY_DATE) == INTERRUPTED_RC
+
+
 @pytest.mark.parametrize(
     ("day", "hhmm", "checked"),
     [(MONDAY, "08:44", False), (MONDAY, "08:45", True), (MONDAY, "09:16", False),
@@ -644,10 +1155,12 @@ def test_run_job_forwards_a_stop_as_sigterm(tmp_path):
     settings = _settings(tmp_path)
     log, stop = tmp_path / "logs" / "job.log", threading.Event()
     _when_started(log, stop.set)
-    began = _time.monotonic()
+    began, before = _time.monotonic(), datetime.now(IST)
     result = run_job([sys.executable, "-c", GRACEFUL], deadline=_far_future(),
                      settings=settings, log_path=log, stop=stop)
-    assert result == JobResult(rc=0, deadline_hit=False, stopped=True)
+    assert (result.rc, result.deadline_hit, result.stopped, result.killed) == (0, False, True,
+                                                                                False)
+    assert before <= result.stopped_at <= datetime.now(IST)  # when the SIGTERM went out
     assert "graceful" in log.read_text()
     assert _time.monotonic() - began < 10
 
@@ -677,7 +1190,137 @@ def test_run_job_kills_a_child_that_ignores_sigterm(tmp_path):
                      settings=settings, log_path=log, stop=stop)
     assert result.rc == -signal.SIGKILL
     assert result.stopped
+    assert result.killed
     assert _time.monotonic() - began < 15
+
+
+def test_run_job_kills_the_child_when_it_cannot_watch_it(tmp_path, monkeypatch):
+    """The tee thread cannot start (thread limit): the child must not keep running unseen,
+    or every retry of the recovery monitor would leave one more live monitor behind."""
+    children, real_popen = [], subprocess.Popen
+
+    def popen(*args, **kwargs):
+        children.append(real_popen(*args, **kwargs))
+        return children[-1]
+
+    def no_thread(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(scheduler.subprocess, "Popen", popen)
+    monkeypatch.setattr(scheduler.threading.Thread, "start", no_thread)
+    with pytest.raises(RuntimeError, match="can't start new thread"):
+        run_job([sys.executable, "-c", "import time; time.sleep(60)"], deadline=_far_future(),
+                settings=_settings(tmp_path), log_path=tmp_path / "logs" / "job.log",
+                stop=threading.Event())
+    assert len(children) == 1
+    assert children[0].poll() == -signal.SIGKILL
+
+
+def test_run_job_a_graceful_stop_is_not_killed(tmp_path):
+    settings = _settings(tmp_path)
+    log, stop = tmp_path / "logs" / "job.log", threading.Event()
+    _when_started(log, stop.set)
+    result = run_job([sys.executable, "-c", GRACEFUL], deadline=_far_future(),
+                     settings=settings, log_path=log, stop=stop)
+    assert not result.killed
+
+
+# The daemon logs every monitor cycle: far more than a pipe buffer (64 KiB on Linux).
+CHATTY = """
+import sys
+for i in range(3000):
+    sys.stdout.write("monitor cycle %05d %s\\n" % (i, "x" * 100))
+sys.stdout.flush()
+print("done", flush=True)
+"""
+
+
+class _DiskFull:
+    """A session log whose writes fail with ENOSPC after the first *ok* lines."""
+
+    def __init__(self, ok: int):
+        self.ok, self.lines = ok, []
+
+    def write(self, text):
+        if len(self.lines) >= self.ok:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        self.lines.append(text)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class _BrokenStdout:
+    def __init__(self, exc: Exception):
+        self.exc = exc
+
+    def write(self, text):
+        raise self.exc
+
+    def flush(self):
+        raise self.exc
+
+
+def _deadline_after(seconds: float):
+    """(deadline, clock): the deadline passes *seconds* from now, so a hung child is stopped."""
+    began = _time.monotonic()
+
+    def clock():
+        late = _time.monotonic() - began >= seconds
+        return datetime.now(IST) + (timedelta(hours=2) if late else timedelta(0))
+
+    return datetime.now(IST) + timedelta(hours=1), clock
+
+
+@pytest.mark.parametrize("sink", ["log disk full", "log unopenable", "stdout closed",
+                                  "stdout EIO"])
+def test_run_job_keeps_draining_the_child_when_a_sink_fails(tmp_path, monkeypatch, sink):
+    """A child blocked on a full pipe cannot run its monitor or handle SIGTERM: the pipe is
+    read to the end whatever happens to the session log or to our stdout."""
+    settings = dataclasses.replace(_settings(tmp_path), kill_after_seconds=2)
+    log_path = tmp_path / "logs" / "daemon.log"
+    if sink == "log disk full":
+        monkeypatch.setattr(scheduler, "open", lambda *a, **k: _DiskFull(ok=10), raising=False)
+    elif sink == "log unopenable":
+        log_path.mkdir(parents=True)  # open(..., "a") raises IsADirectoryError
+    elif sink == "stdout closed":
+        monkeypatch.setattr(sys, "stdout", _BrokenStdout(ValueError("I/O on closed file")))
+    else:
+        monkeypatch.setattr(sys, "stdout", _BrokenStdout(OSError(errno.EIO, "I/O error")))
+    deadline, clock = _deadline_after(8)
+
+    result = run_job([sys.executable, "-c", CHATTY], deadline=deadline, settings=settings,
+                     log_path=log_path, stop=threading.Event(), clock=clock)
+
+    assert result == JobResult(rc=0)  # ran to the end on its own: never blocked
+    if sink.startswith("stdout"):
+        assert log_path.read_text().endswith("done\n")  # the log still gets everything
+
+
+def test_run_job_alerts_once_when_the_session_log_fails(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    log = _DiskFull(ok=10)
+    monkeypatch.setattr(scheduler, "open", lambda *a, **k: log, raising=False)
+    rec = Recorder()
+    deadline, clock = _deadline_after(8)
+
+    result = run_job([sys.executable, "-c", CHATTY], deadline=deadline, settings=settings,
+                     log_path=tmp_path / "logs" / "daemon.log", stop=threading.Event(),
+                     clock=clock, alert=rec.alert)
+
+    assert result.rc == 0
+    assert len(log.lines) == 10  # the failed log is dropped, not retried on every line
+    assert len(rec.alerts) == 1
+    assert "daemon.log" in rec.alerts[0] and "No space left on device" in rec.alerts[0]
 
 
 def test_run_job_touches_the_heartbeat(tmp_path):

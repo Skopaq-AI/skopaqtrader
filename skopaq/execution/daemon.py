@@ -82,6 +82,9 @@ class DaemonSessionReport:
     decisions_settled: int = 0
     halted: str = ""  # kill switch description when the session was halted
     pre_open_failed: bool = False  # PRE_OPEN raised: nothing was scanned or traded
+    # The session itself failed (an exception ended it); a candidate's failed analysis
+    # only adds to errors.
+    failed: bool = False
     errors: list[str] = field(default_factory=list)
     monitor_result: Optional[MonitorResult] = None
 
@@ -249,6 +252,7 @@ class TradingDaemon:
         except Exception as exc:
             logger.error("Daemon session failed: %s", exc, exc_info=True)
             report.errors.append(str(exc))
+            report.failed = True
             report.pre_open_failed = self._phase == DaemonPhase.PRE_OPEN
             # The CLOSING safety net also runs when the session fails after opening trades
             # (e.g. the monitor could not read positions): nothing else would sell them.
