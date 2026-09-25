@@ -1,71 +1,128 @@
-# SkopaqTrader Docker Compose
+# SkopaqTrader: always-on stack for one host (Mac mini M4 with Docker Desktop/OrbStack, or Linux).
+# Runbook: docs/deployment/mac-mini.md. Checks: scripts/macmini/verify.sh
+# (Commands below sit on their own lines, without trailing comments, so they paste into zsh.)
 #
-# Quick start:
-#   cp .env.example .env    # Add your API keys
-#   docker compose up -d    # Start API + Telegram bot
+# Start: copy .env.example to .env and fill it in (keep SKOPAQ_SCHEDULER_MODE=paper to start),
+# then start api + telegram + scheduler (one daemon session per NSE trading day); all three
+# should turn "healthy":
+#     cp .env.example .env
+#     docker compose up -d --build
+#     docker compose ps
 #
-# Individual services:
-#   docker compose up api           # FastAPI only
-#   docker compose up telegram      # Telegram bot only
-#   docker compose run --rm chat    # Interactive chatbot
-#   docker compose run --rm scan    # One-shot market scan
+# One-off tools (same image and volumes):
+#   interactive chatbot:
+#     docker compose run --rm chat
+#   one-shot market scan:
+#     docker compose run --rm scan
+#   scan-only daemon session, now:
+#     docker compose run --rm daemon --dry-run
+#   MCP server over stdio (Claude Code):
+#     docker compose run --rm -T mcp
+#   kill switch (any `skopaq` command works the same way):
+#     docker compose exec api skopaq halt "reason"
+#
+# Before the first `up`: disable Railway's daemon cron and scale Fly's Telegram bot to 0,
+# otherwise two daemons trade the same account and two bots fight over getUpdates (HTTP 409).
+# Do not recreate the scheduler between 09:15 and 15:45 IST on a trading day: SIGTERM makes a
+# running session close its positions.
+
+x-skopaq: &skopaq
+  image: skopaqtrader:local
+  build: .
+  env_file: .env
+  init: true                      # tini as PID 1: forwards signals, reaps children
+  environment: &skopaq-env
+    TZ: Asia/Kolkata
+    PYTHONUNBUFFERED: "1"
+    # Ollama runs natively on the Mac (Metal GPU); containers reach it through the host gateway.
+    SKOPAQ_OLLAMA_BASE_URL: ${SKOPAQ_DOCKER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"   # built into Docker Desktop/OrbStack; needed on Linux/colima
+  volumes:
+    # ~/.skopaq (INDstocks token + key, HALT kill-switch file), ~/.tradingagents (decision log),
+    # results/ and .cache/ (cwd), scheduler markers and daemon session logs
+    - skopaq-home:/home/skopaq
+    - skopaq-data:/data             # Kite access token, shared by api (OAuth callback) and telegram
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
 
 services:
-  # ── FastAPI Backend ──────────────────────────────────────────
+  # FastAPI backend: loopback only. Expose it publicly only through a Cloudflare Tunnel with Access.
   api:
-    build: .
+    <<: *skopaq
     command: api
     ports:
-      - "8000:8000"
-    env_file: .env
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-m", "skopaq.healthcheck", "api"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 40s
 
-  # ── Telegram Bot ─────────────────────────────────────────────
+  # Telegram bot (long polling; exactly one poller per bot token)
   telegram:
-    build: .
+    <<: *skopaq
     command: telegram
-    env_file: .env
     restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
+    environment:
+      <<: *skopaq-env
+      SKOPAQ_HEARTBEAT_FILE: /tmp/skopaq-telegram.heartbeat
+    healthcheck:
+      test: ["CMD", "python", "-m", "skopaq.healthcheck", "heartbeat", "/tmp/skopaq-telegram.heartbeat", "180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
-  # ── Interactive Chat (run interactively, not as daemon) ──────
+  # One daemon session per NSE trading day (09:15 IST, catch-up to 11:30, hard stop 15:45)
+  scheduler:
+    <<: *skopaq
+    command: scheduler
+    restart: unless-stopped
+    stop_grace_period: 6m           # longer than the 5 min kill-after, so CLOSING can finish
+    environment:
+      <<: *skopaq-env
+      SKOPAQ_HEARTBEAT_FILE: /tmp/skopaq-scheduler.heartbeat
+    healthcheck:
+      test: ["CMD", "python", "-m", "skopaq.healthcheck", "heartbeat", "/tmp/skopaq-scheduler.heartbeat", "180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # One-off tools set the service in `entrypoint`, not `command`: `docker compose run SERVICE ARGS`
+  # replaces the command, so ARGS (e.g. --dry-run) are appended to the service instead.
   chat:
-    build: .
-    command: chat
-    env_file: .env
+    <<: *skopaq
+    entrypoint: ["/entrypoint.sh", "chat"]
     stdin_open: true
     tty: true
-    profiles:
-      - interactive
+    profiles: [interactive]
 
-  # ── Autonomous Daemon (paper mode) ──────────────────────────
+  # Manual one-off session: docker compose run --rm daemon [--dry-run]. No restart policy.
   daemon:
-    build: .
-    command: daemon
-    env_file: .env
-    profiles:
-      - trading
+    <<: *skopaq
+    entrypoint: ["/entrypoint.sh", "daemon"]
+    stop_grace_period: 6m
+    profiles: [trading]
 
-  # ── Market Scanner (one-shot) ───────────────────────────────
   scan:
-    build: .
-    command: scan
-    env_file: .env
-    profiles:
-      - tools
+    <<: *skopaq
+    entrypoint: ["/entrypoint.sh", "scan"]
+    profiles: [tools]
 
-  # ── MCP Server (for Claude Code / external agents) ──────────
+  # stdio server: use `docker compose run --rm -T mcp`, never `up -d`
   mcp:
-    build: .
-    command: mcp
-    env_file: .env
+    <<: *skopaq
+    entrypoint: ["/entrypoint.sh", "mcp"]
     stdin_open: true
-    profiles:
-      - mcp
+    profiles: [mcp]
+
+volumes:
+  skopaq-home:
+  skopaq-data:

@@ -159,7 +159,11 @@ def halt(
     """
     from skopaq.execution import kill_switch
 
-    where = kill_switch.halt(reason, by="cli")
+    try:
+        where = kill_switch.halt(reason, by="cli")
+    except RuntimeError as exc:  # neither the halt file nor Supabase could record it
+        display_error(str(exc))
+        raise typer.Exit(1)
     display_success(f"Trading HALTED: {reason}\nRecorded in: {', '.join(where)}")
     if "supabase:system_flags" not in where:
         display_error(
@@ -769,15 +773,16 @@ async def _run_monitor(config, ai_enabled: bool):
             logger.warning("Failed to build LLM map — AI tier disabled", exc_info=True)
             ai_enabled = False
 
-    # Graceful shutdown via Ctrl+C
+    # Graceful shutdown via Ctrl+C or SIGTERM (docker stop)
     stop_event = asyncio.Event()
 
     def _handle_sigint(*_):
-        logger.info("Ctrl+C received — shutting down monitor gracefully...")
+        logger.info("Stop signal received — shutting down monitor gracefully...")
         stop_event.set()
 
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(sig.SIGINT, _handle_sigint)
+    for s in (sig.SIGINT, sig.SIGTERM):
+        loop.add_signal_handler(s, _handle_sigint)
 
     # Run monitor within client context
     async with client:
@@ -806,6 +811,10 @@ def daemon(
     once: bool = typer.Option(False, "--once", help="Run immediately without waiting for market open."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Scanner only — print candidates, don't trade."),
     confirm_live: bool = typer.Option(False, "--confirm-live", help="Skip interactive confirmation for live mode (for cron/CI)."),
+    ignore_calendar: bool = typer.Option(
+        False, "--ignore-calendar",
+        help="Run even on a weekend, an NSE holiday or after 15:30 IST (testing only).",
+    ),
 ) -> None:
     """Run the autonomous trading daemon (scan -> trade -> monitor -> close)."""
     from skopaq.config import SkopaqConfig
@@ -819,6 +828,22 @@ def daemon(
         config.trading_mode = "live"
     if max_trades > 0:
         config.daemon_max_trades_per_session = max_trades
+
+    # NSE calendar gate: no session on weekends, NSE holidays or after the close.
+    # Exits 0 so cron/scheduler runs on those days are not failures.
+    if not dry_run and not ignore_calendar:
+        from skopaq.risk import calendar as nse_calendar
+
+        try:
+            blocked = nse_calendar.daemon_block_reason(
+                nse_calendar.now_ist(), config.nse_holidays,
+            )
+        except ValueError as exc:  # a malformed SKOPAQ_NSE_HOLIDAYS
+            display_error(str(exc))
+            raise typer.Exit(1)
+        if blocked:
+            display_info(f"No daemon session: {blocked}")
+            raise typer.Exit(0)
 
     # Double-confirmation gate for LIVE mode — real money at stake
     if config.trading_mode == "live" and not dry_run:
@@ -836,6 +861,12 @@ def daemon(
     display_daemon_start(config)
     report = asyncio.run(_run_daemon(config, once=once, dry_run=dry_run))
     display_daemon_report(report)
+    if report.pre_open_failed:  # nothing traded: `skopaq schedule` may retry this morning
+        from skopaq.execution.daemon import PRE_OPEN_FAILED_EXIT_CODE
+
+        raise typer.Exit(PRE_OPEN_FAILED_EXIT_CODE)
+    if report.errors:
+        raise typer.Exit(1)  # lets schedulers (skopaq schedule, Railway cron) see failed sessions
 
 
 async def _run_daemon(config, *, once: bool = False, dry_run: bool = False):
@@ -867,6 +898,43 @@ async def _run_daemon(config, *, once: bool = False, dry_run: bool = False):
         return DaemonSessionReport(session_date="cancelled")
 
     return await daemon_instance.run_session(dry_run=dry_run)
+
+
+# ── Schedule ─────────────────────────────────────────────────────────────────
+
+
+@app.command("schedule")
+def schedule(
+    check: bool = typer.Option(
+        False, "--check",
+        help="Print today's plan and the next session, then exit (1 if the configuration "
+        "or this year's NSE holiday list is not usable).",
+    ),
+) -> None:
+    """Run one daemon session per NSE trading day (always-on host; docs/deployment/mac-mini.md)."""
+    from skopaq.config import SkopaqConfig
+    from skopaq.execution.scheduler import (
+        SchedulerState,
+        ScheduleSettings,
+        check_ok,
+        describe,
+        run_forever,
+    )
+    from skopaq.risk import calendar as nse_calendar
+
+    try:
+        settings = ScheduleSettings.from_config(SkopaqConfig())
+    except ValueError as exc:
+        display_error(str(exc))
+        raise typer.Exit(1)
+
+    if check:
+        now = nse_calendar.now_ist()
+        for line in describe(settings, now, SchedulerState(settings.state_dir, settings.log_dir)):
+            typer.echo(line)
+        raise typer.Exit(0 if check_ok(settings, now) else 1)
+
+    raise typer.Exit(run_forever(settings))
 
 
 # ── Chat ─────────────────────────────────────────────────────────────────────
@@ -1217,7 +1285,7 @@ def _setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S %Z",
     )
 
 

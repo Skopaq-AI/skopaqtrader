@@ -10,7 +10,10 @@ Usage::
     daemon = TradingDaemon(config)
     report = await daemon.run_session()
 
-Railway cron triggers this daily at 09:10 IST (weekdays).
+Started once per NSE trading day at 09:15 IST (market open): by the ``skopaq schedule``
+loop on an always-on host (docker compose), or by the Railway cron (``45 3 * * 1-5``
+UTC). With ``--once`` PRE_OPEN starts at once and the scan follows the scan delay, so a
+09:15 start scans after the open, not in the 09:00-09:15 pre-open auction.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from typing import TYPE_CHECKING, Optional
 from skopaq.constants import (
     DAEMON_PAPER_SAFETY_RULES,
     DAEMON_SAFETY_RULES,
+    NSE_MARKET_CLOSE,
     NSE_MARKET_OPEN,
 )
 
@@ -38,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 # IST = UTC+5:30
 _IST = timezone(timedelta(hours=5, minutes=30))
+
+# The end-of-session Telegram report may not hold up the process exit for longer.
+_NOTIFY_TIMEOUT_SECONDS = 15
+
+# `skopaq daemon` exit code when PRE_OPEN failed (token, broker session, LLM setup): nothing
+# was scanned or traded, so the scheduler may start the session again later that morning.
+PRE_OPEN_FAILED_EXIT_CODE = 3
 
 
 class DaemonPhase(str, Enum):
@@ -70,6 +81,7 @@ class DaemonSessionReport:
     gross_pnl: float = 0.0
     decisions_settled: int = 0
     halted: str = ""  # kill switch description when the session was halted
+    pre_open_failed: bool = False  # PRE_OPEN raised: nothing was scanned or traded
     errors: list[str] = field(default_factory=list)
     monitor_result: Optional[MonitorResult] = None
 
@@ -237,6 +249,16 @@ class TradingDaemon:
         except Exception as exc:
             logger.error("Daemon session failed: %s", exc, exc_info=True)
             report.errors.append(str(exc))
+            report.pre_open_failed = self._phase == DaemonPhase.PRE_OPEN
+            # The CLOSING safety net also runs when the session fails after opening trades
+            # (e.g. the monitor could not read positions): nothing else would sell them.
+            if report.trades_opened > 0 and self._phase != DaemonPhase.CLOSING:
+                logger.warning("Session failed with %d trade(s) opened: running CLOSING",
+                               report.trades_opened)
+                try:
+                    await self._timed_phase(DaemonPhase.CLOSING, self._phase_close)
+                except Exception:
+                    logger.error("CLOSING after the failure failed too", exc_info=True)
         finally:
             # Phase 7: REPORTING — compile metrics
             self._phase = DaemonPhase.REPORTING
@@ -254,16 +276,30 @@ class TradingDaemon:
 
             self._phase = DaemonPhase.SHUTDOWN
 
-        self._log_report(report)
+        msg = self._log_report(report)
+        await self._notify_report(msg)
         return report
 
     # ── Phase implementations ─────────────────────────────────────────
+
+    def _session_end(self, now: Optional[datetime] = None) -> datetime:
+        """Until when today's session may need the broker: the NSE close or, if later, the
+        scheduler deadline (a session still running then is stopped and sells)."""
+        end = NSE_MARKET_CLOSE
+        try:
+            from skopaq.execution.scheduler import parse_hhmm
+
+            end = max(end, parse_hhmm(self._config.scheduler_deadline))
+        except (AttributeError, TypeError, ValueError):
+            pass
+        day = (now or datetime.now(_IST)).astimezone(_IST).date()
+        return datetime.combine(day, end, tzinfo=_IST)
 
     async def _phase_pre_open(self) -> None:
         """Validate token, build LLM map, create executor stack."""
         from skopaq.broker.client import INDstocksClient
         from skopaq.broker.paper_engine import PaperEngine
-        from skopaq.broker.token_manager import TokenManager
+        from skopaq.broker.token_manager import TokenManager, session_token_problem
         from skopaq.cli.main import (
             _build_upstream_config,
             _create_memory_store,
@@ -277,7 +313,7 @@ class TradingDaemon:
 
         config = self._config
 
-        # 1. Validate INDstocks token
+        # 1. Validate INDstocks token: valid now, and still valid when the session ends
         token_mgr = TokenManager()
         health = token_mgr.get_health()
         if not health.valid:
@@ -285,6 +321,9 @@ class TradingDaemon:
                 f"INDstocks token invalid: {health.warning}. "
                 "Run `skopaq token set <token>` first."
             )
+        problem = session_token_problem(health, self._session_end())
+        if problem:
+            raise RuntimeError(problem)
         logger.info("Token valid — expires in %s", health.remaining)
 
         # 2. Open broker client session
@@ -629,8 +668,8 @@ class TradingDaemon:
 
         return result
 
-    def _log_report(self, report: DaemonSessionReport) -> None:
-        """Log the session report summary and send Telegram notification."""
+    def _log_report(self, report: DaemonSessionReport) -> str:
+        """Log the session report summary; returns the notification text."""
         logger.info("=" * 60)
         logger.info("DAEMON SESSION REPORT — %s", report.session_date)
         logger.info("=" * 60)
@@ -662,30 +701,26 @@ class TradingDaemon:
 
         logger.info("=" * 60)
 
-        # Notify via Telegram
+        msg = (
+            f"Daemon Session Complete\n\n"
+            f"Date: {report.session_date}\n"
+            f"Scanned: {report.candidates_scanned} | "
+            f"Analyzed: {report.candidates_analyzed}\n"
+            f"Trades: {report.trades_opened} opened, "
+            f"{report.trades_rejected} rejected\n"
+            f"Sells: {report.sells_executed} executed\n"
+            f"P&L: Rs {report.gross_pnl:+,.2f}\n"
+            f"Duration: {total/60:.1f} min"
+        )
+        if report.errors:
+            msg += f"\nErrors: {len(report.errors)}"
+        return msg
+
+    async def _notify_report(self, msg: str) -> None:
+        """Send the session report via Telegram; awaited (bounded) so it is not dropped."""
         try:
-            import asyncio
             from skopaq.notifications import notify
 
-            msg = (
-                f"Daemon Session Complete\n\n"
-                f"Date: {report.session_date}\n"
-                f"Scanned: {report.candidates_scanned} | "
-                f"Analyzed: {report.candidates_analyzed}\n"
-                f"Trades: {report.trades_opened} opened, "
-                f"{report.trades_rejected} rejected\n"
-                f"Sells: {report.sells_executed} executed\n"
-                f"P&L: Rs {report.gross_pnl:+,.2f}\n"
-                f"Duration: {total/60:.1f} min"
-            )
-            if report.errors:
-                msg += f"\nErrors: {len(report.errors)}"
-
-            # Fire-and-forget notification
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(notify(msg))
-            except RuntimeError:
-                asyncio.run(notify(msg))
+            await asyncio.wait_for(notify(msg), timeout=_NOTIFY_TIMEOUT_SECONDS)
         except Exception:
-            pass
+            logger.warning("Session report notification failed or timed out", exc_info=True)

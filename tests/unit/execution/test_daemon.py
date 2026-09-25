@@ -177,6 +177,107 @@ async def test_pre_open_validates_token(daemon):
             await daemon._phase_pre_open()
 
 
+def _health(expires_in: timedelta):
+    from skopaq.broker.token_manager import TokenHealth
+
+    return TokenHealth(
+        valid=True, token="t", expires_at=datetime.now(timezone.utc) + expires_in,
+        remaining=expires_in,
+    )
+
+
+def test_session_end_is_the_later_of_the_close_and_the_scheduler_deadline(daemon, config):
+    monday_9am = datetime(2026, 9, 28, 9, 0, tzinfo=_IST)
+    config.scheduler_deadline = "15:45"
+    assert daemon._session_end(monday_9am) == datetime(2026, 9, 28, 15, 45, tzinfo=_IST)
+    config.scheduler_deadline = "15:00"
+    assert daemon._session_end(monday_9am) == datetime(2026, 9, 28, 15, 30, tzinfo=_IST)
+    config.scheduler_deadline = "bogus"
+    assert daemon._session_end(monday_9am) == datetime(2026, 9, 28, 15, 30, tzinfo=_IST)
+
+
+@pytest.mark.asyncio
+async def test_pre_open_refuses_a_token_that_expires_mid_session(daemon):
+    end = datetime.now(_IST) + timedelta(hours=6)
+    with patch("skopaq.broker.token_manager.TokenManager") as MockTM, \
+         patch.object(daemon, "_session_end", return_value=end), \
+         patch("skopaq.broker.client.INDstocksClient") as MockClient:
+        MockTM.return_value.get_health.return_value = _health(timedelta(minutes=5))
+        with pytest.raises(RuntimeError, match="expires at .* before the session ends"):
+            await daemon._phase_pre_open()
+    MockClient.assert_not_called()  # refused before any broker call
+
+
+def test_session_token_problem():
+    from skopaq.broker.token_manager import TokenHealth, session_token_problem
+
+    until = datetime.now(timezone.utc) + timedelta(hours=6)
+    assert session_token_problem(_health(timedelta(hours=7)), until) == ""
+    assert "before the session ends" in session_token_problem(_health(timedelta(hours=1)), until)
+    invalid = TokenHealth(valid=False, warning="No token stored")
+    assert "No token stored" in session_token_problem(invalid, until)
+
+
+@pytest.mark.asyncio
+async def test_a_pre_open_failure_is_flagged_and_nothing_is_scanned(daemon):
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock,
+                      side_effect=RuntimeError("INDstocks token invalid")), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock) as scan, \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch.object(daemon, "_notify_report", new_callable=AsyncMock):
+        report = await daemon.run_session()
+    assert report.pre_open_failed
+    assert report.errors
+    scan.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_later_failure_is_not_a_pre_open_failure(daemon):
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock), \
+         patch.object(daemon, "_halt_status", return_value=MagicMock(halted=False)), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock,
+                      side_effect=RuntimeError("scanner down")), \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch.object(daemon, "_notify_report", new_callable=AsyncMock):
+        report = await daemon.run_session()
+    assert report.errors == ["scanner down"]
+    assert not report.pre_open_failed
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_trades_still_runs_closing(daemon):
+    async def trade(candidates, report):
+        report.trades_opened = 1
+        return [MagicMock()]
+
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock), \
+         patch.object(daemon, "_halt_status", return_value=MagicMock(halted=False)), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock, return_value=["TCS"]), \
+         patch.object(daemon, "_phase_analyze_and_trade", side_effect=trade), \
+         patch.object(daemon, "_phase_monitor", new_callable=AsyncMock,
+                      side_effect=RuntimeError("positions unavailable")), \
+         patch.object(daemon, "_phase_close", new_callable=AsyncMock) as close, \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch.object(daemon, "_notify_report", new_callable=AsyncMock):
+        report = await daemon.run_session()
+    assert report.errors == ["positions unavailable"]
+    close.assert_awaited_once()
+    assert "closing" in report.phase_times
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_any_trade_does_not_run_closing(daemon):
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock), \
+         patch.object(daemon, "_halt_status", return_value=MagicMock(halted=False)), \
+         patch.object(daemon, "_phase_scan", new_callable=AsyncMock,
+                      side_effect=RuntimeError("scanner down")), \
+         patch.object(daemon, "_phase_close", new_callable=AsyncMock) as close, \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch.object(daemon, "_notify_report", new_callable=AsyncMock):
+        await daemon.run_session()
+    close.assert_not_awaited()
+
+
 # ── SCANNING Phase ───────────────────────────────────────────────────────────
 
 
@@ -511,3 +612,40 @@ async def test_record_exit_goes_through_the_trade_lifecycle(daemon):
     config, graph, _store, result = lifecycle.await_args.args
     assert graph is None  # reflection off: record only
     assert (result.symbol, result.signal) == ("TCS", signal)
+
+
+# ── End-of-session notification ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_session_report_notification_is_awaited(daemon):
+    """The report reaches Telegram even when the session fails (not fire-and-forget)."""
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock,
+                      side_effect=RuntimeError("token expired")), \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch("skopaq.notifications.notify", new_callable=AsyncMock) as notify:
+        report = await daemon.run_session()
+
+    assert report.errors == ["token expired"]
+    notify.assert_awaited_once()
+    message = notify.await_args.args[0]
+    assert "Daemon Session Complete" in message
+    assert "Errors: 1" in message
+
+
+@pytest.mark.asyncio
+async def test_slow_notification_does_not_hold_up_the_session(daemon):
+    async def slow(_msg):
+        await asyncio.sleep(5)
+
+    with patch.object(daemon, "_phase_pre_open", new_callable=AsyncMock,
+                      side_effect=RuntimeError("x")), \
+         patch.object(daemon, "_settle_due_decisions", new_callable=AsyncMock, return_value=0), \
+         patch("skopaq.notifications.notify", side_effect=slow), \
+         patch("skopaq.execution.daemon._NOTIFY_TIMEOUT_SECONDS", 0.1):
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        report = await daemon.run_session()
+
+    assert report.errors == ["x"]
+    assert loop.time() - began < 2
