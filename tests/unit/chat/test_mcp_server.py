@@ -88,6 +88,8 @@ def test_scan_market_returns_candidates_as_json():
 class _FakeJev:
     """Stands in for skopaq.llm.jev.Jev in quick_decision tests."""
 
+    model, endpoint, last_error = "jev-1.13.0", "https://api.typesafe.ai", ""
+
     def __init__(self, verdict=None, noul=None):
         self.verdict, self._noul = verdict, noul
         self.calls = []
@@ -153,3 +155,22 @@ def test_quick_decision_validates_options_before_calling_jev():
 
 def test_quick_decision_reports_jev_failure():
     assert _quick(_FakeJev(), text="t", question="q?")["error"] == "Jev request failed"
+
+
+def test_quick_decision_failure_says_where_and_why(monkeypatch):
+    """A gateway rejecting the model: the answer names the endpoint, model and HTTP error."""
+    import httpx2
+
+    from skopaq.llm.jev import Jev
+
+    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
+    jev = Jev(api_key="k", model="jev-1.13.0", base_url="https://openrouter.ai/api",
+              transport=httpx2.MockTransport(
+                  lambda request: httpx2.Response(404, json={"error": "model not found"})))
+
+    result = _quick(jev, text="t", question="Is it bullish?")
+
+    assert result["error"] == "Jev request failed"
+    assert result["endpoint"] == "https://openrouter.ai/api"
+    assert result["model"] == "jev-1.13.0"
+    assert "404" in result["reason"]

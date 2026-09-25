@@ -1398,6 +1398,16 @@ async def gather_social_data(symbol: str, date: str = "") -> str:
     })
 
 
+def _jev_failed(jev) -> str:
+    """quick_decision's error when a Jev request failed: where it went and why."""
+    return json.dumps({
+        "error": "Jev request failed",
+        "reason": jev.last_error or "no usable answer in the response",
+        "endpoint": jev.endpoint,
+        "model": jev.model,
+    })
+
+
 @mcp.tool()
 async def quick_decision(
     text: str,
@@ -1443,7 +1453,7 @@ async def quick_decision(
              "criteria": {label: label for label in labels}},
         )
         if verdict is None:
-            return json.dumps({"error": "Jev request failed"})
+            return _jev_failed(jev)
         return json.dumps({
             "answer": verdict.choice,
             "confidence": round(verdict.confidence, 3),
@@ -1453,7 +1463,7 @@ async def quick_decision(
 
     result = await jev.noul({"text": text}, instructions)
     if result is None:
-        return json.dumps({"error": "Jev request failed"})
+        return _jev_failed(jev)
     probability, model = result
     return json.dumps({
         "answer": "yes" if probability >= 0.5 else "no",

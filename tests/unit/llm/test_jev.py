@@ -38,6 +38,12 @@ def _jev(handler, **kwargs) -> Jev:
     return Jev(api_key="test-key", transport=httpx2.MockTransport(handler), **kwargs)
 
 
+@pytest.fixture(autouse=True)
+def _no_gateway_env(monkeypatch):
+    """The SDK reads TYPESAFE_BASE_URL; keep a developer's value out of these tests."""
+    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
+
+
 class TestAsk:
     def test_trade_action_request_and_verdict(self):
         seen = {}
@@ -157,11 +163,67 @@ class TestAsk:
         assert verdict.describe() == "Jev jev-1.13.0: SELL (confidence 0.90; HOLD=0.05, SELL=0.95)"
 
 
+class TestGateway:
+    """Jev served by a TypeSafe-compatible gateway (OpenRouter) instead of api.typesafe.ai."""
+
+    def test_requests_go_to_the_base_url(self):
+        seen = {}
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            seen["url"] = str(request.url)
+            seen["auth"] = request.headers["authorization"]
+            seen["model"] = json.loads(request.content)["model"]
+            return httpx2.Response(
+                200, json=_answer("HOLD", {"BUY": 0.2, "HOLD": 0.7, "SELL": 0.1}, 0.5))
+
+        jev = _jev(handler, base_url="https://openrouter.ai/api/", model="jev-1.13")
+        verdict = asyncio.run(jev.trade_action("**Rating**: Hold"))
+
+        assert seen == {"url": "https://openrouter.ai/api/v1/systemone",
+                        "auth": "Bearer test-key", "model": "jev-1.13"}
+        assert verdict.choice == "HOLD"
+        assert jev.endpoint == "https://openrouter.ai/api"
+
+    def test_without_a_base_url_the_sdk_variable_applies(self, monkeypatch):
+        seen = {}
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            seen["url"] = str(request.url)
+            return httpx2.Response(200, json=_answer("BUY", {"BUY": 0.9, "HOLD": 0.1}, 0.8))
+
+        monkeypatch.setenv("TYPESAFE_BASE_URL", "https://gateway.example/typesafe")
+        jev = _jev(handler)
+        asyncio.run(jev.trade_action("**Rating**: Buy"))
+
+        assert seen["url"] == "https://gateway.example/typesafe/v1/systemone"
+        assert jev.endpoint == "https://gateway.example/typesafe"
+
+    def test_default_endpoint(self):
+        assert Jev(api_key="k").endpoint == "https://api.typesafe.ai"
+
+    def test_failure_is_recorded_and_cleared(self):
+        status = {"code": 404}
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            if status["code"] != 200:
+                return httpx2.Response(status["code"], json={"error": "model not found"})
+            return httpx2.Response(200, json=_answer("BUY", {"BUY": 0.9, "HOLD": 0.1}, 0.8))
+
+        jev = _jev(handler, base_url="https://openrouter.ai/api")
+        assert asyncio.run(jev.trade_action("**Rating**: Buy")) is None
+        assert "404" in jev.last_error
+
+        status["code"] = 200
+        assert asyncio.run(jev.trade_action("**Rating**: Buy")).choice == "BUY"
+        assert jev.last_error == ""
+
+
 class TestGetJev:
     @pytest.fixture(autouse=True)
-    def _fresh(self, monkeypatch):
+    def _fresh(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)  # SkopaqConfig reads .env from the working directory
         for var in ("SKOPAQ_JEV_ENABLED", "SKOPAQ_TYPESAFE_API_KEY", "SKOPAQ_JEV_MODEL",
-                    "SKOPAQ_JEV_MIN_CONFIDENCE"):
+                    "SKOPAQ_JEV_MIN_CONFIDENCE", "SKOPAQ_JEV_BASE_URL"):
             monkeypatch.delenv(var, raising=False)
         jev_module.get_jev.cache_clear()
         yield
@@ -187,3 +249,87 @@ class TestGetJev:
         assert jev.model == "jev-1.13.0"
         assert jev.min_confidence == 0.7
         assert jev.min_catalyst_score == 0.0  # rank only by default
+
+    def test_default_endpoint_is_typesafe(self, monkeypatch):
+        monkeypatch.setenv("SKOPAQ_JEV_ENABLED", "true")
+        monkeypatch.setenv("SKOPAQ_TYPESAFE_API_KEY", "key")
+
+        jev = jev_module.get_jev()
+
+        assert jev.base_url is None
+        assert jev.endpoint == "https://api.typesafe.ai"
+
+    def test_base_url_from_config(self, monkeypatch, caplog):
+        monkeypatch.setenv("SKOPAQ_JEV_ENABLED", "true")
+        monkeypatch.setenv("SKOPAQ_TYPESAFE_API_KEY", "or-key")
+        monkeypatch.setenv("SKOPAQ_JEV_BASE_URL", " https://openrouter.ai/api ")
+        monkeypatch.setenv("SKOPAQ_JEV_MODEL", "jev-1.13")
+
+        with caplog.at_level("INFO", logger="skopaq.llm.jev"):
+            jev = jev_module.get_jev()
+
+        assert jev.base_url == "https://openrouter.ai/api"
+        assert jev.model == "jev-1.13"
+        assert "endpoint=https://openrouter.ai/api" in caplog.text
+        assert "patch number" not in caplog.text
+
+    def test_openrouter_with_a_patch_version_pin_warns(self, monkeypatch, caplog):
+        monkeypatch.setenv("SKOPAQ_JEV_ENABLED", "true")
+        monkeypatch.setenv("SKOPAQ_TYPESAFE_API_KEY", "or-key")
+        monkeypatch.setenv("SKOPAQ_JEV_BASE_URL", "https://openrouter.ai/api")
+
+        with caplog.at_level("WARNING", logger="skopaq.llm.jev"):
+            jev = jev_module.get_jev()
+
+        assert jev is not None  # still on; the warning says how to fix it
+        assert "SKOPAQ_JEV_MODEL=jev-1.13" in caplog.text
+
+    def test_typesafe_itself_keeps_the_patch_pin_quietly(self, monkeypatch, caplog):
+        monkeypatch.setenv("SKOPAQ_JEV_ENABLED", "true")
+        monkeypatch.setenv("SKOPAQ_TYPESAFE_API_KEY", "key")
+
+        with caplog.at_level("WARNING", logger="skopaq.llm.jev"):
+            assert jev_module.get_jev().model == "jev-1.13.0"
+        assert "patch number" not in caplog.text
+
+
+class TestUpstreamPostScreen:
+    """tradingagents/agents/post_screen.py follows TYPESAFE_BASE_URL (UPSTREAM_CHANGES.md #7)."""
+
+    def _post(self, monkeypatch):
+        from tradingagents.agents import post_screen
+
+        seen = {}
+
+        class Response:
+            status_code = 200
+            headers: dict = {}
+
+            @staticmethod
+            def json():
+                return {"model": "jev-latest", "answers": {"about": {"type": "noul", "noul": 0.9}}}
+
+        def post(url, json, headers, timeout):
+            seen.update(url=url, auth=headers["Authorization"], model=json["model"])
+            return Response()
+
+        monkeypatch.setattr(post_screen.requests, "post", post)
+        monkeypatch.setenv("TYPESAFE_API_KEY", "or-key")
+        monkeypatch.delenv("TYPESAFE_DEFAULT_MODEL", raising=False)
+        post_screen.system_one({"post": "p"}, {"about": post_screen.QUESTIONS["about"]})
+        return seen
+
+    def test_default_is_typesafe(self, monkeypatch):
+        assert self._post(monkeypatch)["url"] == "https://api.typesafe.ai/v1/systemone"
+
+    @pytest.mark.parametrize("value", ["https://openrouter.ai/api", "https://openrouter.ai/api/",
+                                       "  https://openrouter.ai/api  "])
+    def test_gateway_from_env(self, monkeypatch, value):
+        monkeypatch.setenv("TYPESAFE_BASE_URL", value)
+        seen = self._post(monkeypatch)
+        assert seen == {"url": "https://openrouter.ai/api/v1/systemone",
+                        "auth": "Bearer or-key", "model": "jev-latest"}
+
+    def test_blank_env_is_typesafe(self, monkeypatch):
+        monkeypatch.setenv("TYPESAFE_BASE_URL", "   ")
+        assert self._post(monkeypatch)["url"] == "https://api.typesafe.ai/v1/systemone"

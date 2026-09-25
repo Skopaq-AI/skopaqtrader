@@ -57,6 +57,10 @@ class SkopaqConfig(BaseSettings):
     jev_min_confidence: float = 0.6  # act on a Jev answer at or above this
     jev_min_catalyst_score: float = 0.0  # scanner: drop below this (0-3); 0 ranks only
     jev_timeout_seconds: float = 5.0
+    # TypeSafe-compatible API root; "" = api.typesafe.ai. OpenRouter serves Jev
+    # at https://openrouter.ai/api (OpenRouter key, SKOPAQ_JEV_MODEL=jev-1.13;
+    # not confirmed to be the same build as jev-1.13.0).
+    jev_base_url: str = ""
 
     # ── Cloudflare Tunnel ───────────────────────────────────────────────
     cf_tunnel_id: str = ""
