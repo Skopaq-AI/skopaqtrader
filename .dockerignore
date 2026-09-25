@@ -1,43 +1,58 @@
-# Git
+# Build context for the Dockerfile. The image is built from the working tree, not from git,
+# so anything sensitive in the checkout must be listed here. A pattern without **/ matches
+# only at the root of the context: use **/ for anything that can appear in a subdirectory.
+
+# Git / CI / editors / OS
 .git
 .gitignore
+.github
+.vscode
+.idea
+**/*.swp
+**/.DS_Store
+**/Thumbs.db
 
-# Python
-__pycache__
-*.pyc
-*.pyo
+# Secrets and local credentials (configuration comes from env_file / --env-file)
+**/.env*
+!.env.example
+**/.envrc
+**/.skopaq/
+**/.cloudflared/
+.railway/
+.fly/
+**/.pypirc
+**/*.pem
+**/*.key
+
+# Python build and tool caches
+**/__pycache__
+**/*.py[co]
 .venv
 venv
 .eggs
 *.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage*
+htmlcov
 
-# Environment (secrets — pass via --env-file)
-.env
-.env.local
-
-# IDE
-.vscode
-.idea
-*.swp
-
-# Claude Code local files
-.claude/plans
-.claude/settings.local.json
-.claude/launch.json
-
-# Results and cache
+# Runtime output and local databases
 results/
 .cache/
 eval_results/
 logs/
+**/*.log
+**/*.db
+**/*.sqlite*
+**/data_cache/
 
-# Frontend (separate build)
-frontend/node_modules
-frontend/.next
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Simulation scripts
+# Not needed at runtime (verify.sh mounts tests/ when running the suite in the image)
+tests/
+docs/
+site/
+assets/
+frontend/
+supabase/.temp/
 sim_portfolio*.py
+.claude/

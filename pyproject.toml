@@ -18,7 +18,7 @@ dependencies = [
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
     "langgraph-checkpoint-sqlite>=2.0.0",
-    "pandas>=2.3.0",
+    "pandas>=2.3.3",  # first release with cp314 wheels
     "python-dotenv>=1.0.0",
     "pytz>=2025.2",
     "questionary>=2.1.0",
@@ -34,7 +34,7 @@ dependencies = [
     "typesafe-sdk>=0.7.1",
     "httpx>=0.28.0",
     "websockets>=13.0",
-    "pydantic>=2.10.0",
+    "pydantic>=2.13",  # cp314 wheels, no Pydantic-V1 warning on 3.14
     "pydantic-settings>=2.6.0",
     "cryptography>=44.0.0",
     "apscheduler>=3.10.0",
@@ -53,8 +53,18 @@ dev = [
     "pytest-cov>=6.0.0",
     "respx>=0.22.0",
     "ruff>=0.8.0",
-    "python-telegram-bot>=21.0",  # tests/unit/chat/test_telegram_bot.py
+    "python-telegram-bot>=22.4",  # tests/unit/chat/test_telegram_bot.py
     "langchain-ollama>=1.0.0",  # Ollama fallback (SKOPAQ_OLLAMA_ENABLED), tests/unit/llm/test_ollama.py
+]
+# Runtime integrations installed in the Docker image (Dockerfile) and into the Mac host's
+# MCP Python (docs/deployment/mac-mini.md). redis is already a core dependency.
+deploy = [
+    "python-telegram-bot[job-queue]>=22.4,<23",  # 22.4+: run_polling works on Python 3.14; job-queue pins APScheduler<3.12
+    "langchain-ollama>=1.0.0",
+    "kiteconnect>=5.0.0",
+    "psycopg2-binary>=2.9.11",  # first release with cp314 wheels
+    "quantstats>=0.0.80",
+    "langchain-community>=0.3",
 ]
 
 [project.scripts]

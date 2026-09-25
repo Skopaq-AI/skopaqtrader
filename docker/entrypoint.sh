@@ -1,63 +1,30 @@
 #!/bin/bash
+# SkopaqTrader container entrypoint.
+#   <service> [args...]   api | telegram | scheduler | chat | mcp | daemon | daemon-live | monitor | scan | status | shell
+#   <skopaq command> ...  any `skopaq` CLI command, e.g. halt "reason", resume --yes, token set <tok>, settle, report
+#   <program> ...         python, python3, pip, bash, sh, skopaq, chown, env, or an absolute path
+# Extra arguments are passed through. Messages go to stderr: for `mcp`, stdout carries only JSON-RPC.
 set -e
 
 SERVICE="${1:-api}"
+if [ "$#" -gt 0 ]; then shift; fi
 
-echo "SkopaqTrader — Starting service: $SERVICE"
+log() { echo "SkopaqTrader: $*" >&2; }
+cli() { exec python -m skopaq.cli.main "$@"; }
 
 case "$SERVICE" in
-    api)
-        echo "Starting FastAPI server on port 8000..."
-        exec python -m skopaq.cli.main serve --host 0.0.0.0 --port 8000
-        ;;
-    chat)
-        echo "Starting interactive AI chatbot..."
-        exec python -m skopaq.cli.main chat
-        ;;
-    telegram)
-        echo "Starting Telegram bot..."
-        exec python -m skopaq.telegram_bot
-        ;;
-    mcp)
-        echo "Starting MCP server (stdio)..."
-        exec python -m skopaq.mcp_server
-        ;;
-    daemon)
-        echo "Starting autonomous trading daemon..."
-        exec python -m skopaq.cli.main daemon --once --paper
-        ;;
-    daemon-live)
-        echo "Starting LIVE autonomous trading daemon..."
-        exec python -m skopaq.cli.main daemon --once --live --confirm-live
-        ;;
-    monitor)
-        echo "Starting position monitor..."
-        exec python -m skopaq.cli.main monitor
-        ;;
-    scan)
-        echo "Running market scan..."
-        exec python -m skopaq.cli.main scan
-        ;;
-    status)
-        exec python -m skopaq.cli.main status
-        ;;
-    shell)
-        exec /bin/bash
-        ;;
-    *)
-        echo "Unknown service: $SERVICE"
-        echo ""
-        echo "Available services:"
-        echo "  api       — FastAPI backend (port 8000)"
-        echo "  chat      — Interactive AI chatbot"
-        echo "  telegram  — Telegram bot"
-        echo "  mcp       — MCP server (stdio)"
-        echo "  daemon    — Paper trading daemon"
-        echo "  daemon-live — LIVE trading daemon"
-        echo "  monitor   — Position monitor"
-        echo "  scan      — Market scan"
-        echo "  status    — System health check"
-        echo "  shell     — Bash shell"
-        exit 1
-        ;;
+    api)         log "starting FastAPI on port ${PORT:-8000}"; cli serve --host 0.0.0.0 --port "${PORT:-8000}" "$@" ;;
+    telegram)    log "starting Telegram bot"; exec python -m skopaq.telegram_bot "$@" ;;
+    scheduler)   log "starting scheduler (one daemon session per NSE trading day)"; cli schedule "$@" ;;
+    chat)        cli chat "$@" ;;
+    mcp)         exec python -m skopaq.mcp_server "$@" ;;
+    daemon)      log "starting a paper daemon session now"; cli daemon --once --paper "$@" ;;
+    daemon-live) log "starting a LIVE daemon session now"; cli daemon --once --live --confirm-live "$@" ;;
+    monitor)     cli monitor "$@" ;;
+    scan)        cli scan "$@" ;;
+    status)      cli status "$@" ;;
+    shell)       exec /bin/bash "$@" ;;
+    help|-h|--help) sed -n '2,6p' "$0" >&2; cli --help ;;
+    python|python3|pip|bash|sh|skopaq|chown|env|/*) exec "$SERVICE" "$@" ;;
+    *)           cli "$SERVICE" "$@" ;;
 esac

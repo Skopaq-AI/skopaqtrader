@@ -1,16 +1,23 @@
 # Railway cron service — autonomous trading daemon.
 #
-# Runs at 09:10 IST (03:40 UTC) every weekday.
-# Same Docker image as the API server, different startCommand.
+# Runs at 09:15 IST (03:45 UTC; Railway cron is UTC) every weekday. The daemon
+# itself exits 0 without trading on NSE holidays and after 15:30 IST.
+# 09:15, not the earlier 09:10: with --once PRE_OPEN starts at once and the scan follows
+# the scan delay (60 s), so a 09:10 start scanned and ordered during the 09:00-09:15
+# pre-open session. Same start as the compose scheduler (SKOPAQ_SCHEDULER_START).
+# Same Docker image as the API server (root Dockerfile), different startCommand.
+#
+# Disable this service before running the Mac mini stack (docker-compose.yml,
+# docs/deployment/mac-mini.md), or two daemons will trade the same account.
 #
 # Deploy as a separate Railway service in the same project:
 #   railway link → select this service → railway up
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "docker/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "python -m skopaq.cli.main daemon --once"
-cronSchedule = "40 3 * * 1-5"
+cronSchedule = "45 3 * * 1-5"
 restartPolicyType = "never"

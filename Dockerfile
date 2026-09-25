@@ -1,57 +1,50 @@
-# SkopaqTrader — Multi-service Docker image
+# SkopaqTrader: one image for every service (api, telegram, scheduler, daemon, mcp, chat, ...).
+# Used by docker-compose.yml (Mac mini / any always-on host), Fly (fly.toml, fly-telegram.toml)
+# and Railway (railway.toml, railway-daemon.toml).
 #
-# Services (select via SKOPAQ_SERVICE env var):
-#   api       — FastAPI backend (default)
-#   chat      — Interactive AI chatbot REPL
-#   telegram  — Telegram bot (@Skopaq_bot)
-#   mcp       — MCP server (stdio transport)
-#   daemon    — Autonomous trading session
-#   monitor   — Position monitor
+# Builds natively on linux/arm64 (Apple Silicon) and linux/amd64 with no compiler: every
+# dependency ships CPython 3.14 wheels for both. 3.14 is also the Mac host's MCP interpreter
+# (.claude/.mcp.json); CI tests 3.11, 3.12 and 3.14.
 #
-# Quick start:
-#   docker run -it --env-file .env skopaqtrader/skopaqtrader chat
-#   docker run -d --env-file .env skopaqtrader/skopaqtrader telegram
-#   docker run -d --env-file .env -p 8000:8000 skopaqtrader/skopaqtrader api
-#
-# Or use docker-compose.yml for all services at once.
+# The always-on stack (docs/deployment/mac-mini.md), any service (docker/entrypoint.sh) or any
+# `skopaq` CLI command:
+#     docker compose up -d --build
+#     docker run --rm --env-file .env skopaqtrader status
+#     docker run --rm --env-file .env skopaqtrader halt "why"
 
-FROM python:3.14-slim AS base
+ARG PYTHON_IMAGE=python:3.14-slim-trixie
+FROM ${PYTHON_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TZ=Asia/Kolkata
 
 WORKDIR /app
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python deps first (cached layer)
+# Dependencies first: rebuilt only when pyproject.toml changes.
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e . 2>/dev/null || pip install --no-cache-dir . \
-    && pip install --no-cache-dir python-telegram-bot>=21.0 langchain-ollama>=1.0.0 kiteconnect>=5.0.0 psycopg2-binary>=2.9 quantstats>=0.0.80 redis>=5.0 langchain-community>=0.3
+RUN pip install -e ".[deploy]"
 
-# Copy application code
+# Application code, then the project itself (its dependencies are already installed).
 COPY . .
 
-# Install the project in editable mode
-RUN pip install --no-cache-dir -e .
+# Non-root user. State directories are created here and owned by skopaq, so a new named
+# volume mounted on /home/skopaq or /data starts out writable (Docker copies the image's
+# ownership into it). /app stays root-owned and read-only for the app.
+RUN pip install --no-deps -e . \
+    && useradd --create-home --uid 1000 --shell /bin/bash skopaq \
+    && mkdir -p /data /home/skopaq/.skopaq /home/skopaq/.tradingagents \
+    && chown -R skopaq:skopaq /data /home/skopaq \
+    && install -m 0755 docker/entrypoint.sh /entrypoint.sh
 
-# Create non-root user
-RUN useradd -m -s /bin/bash skopaq
 USER skopaq
+# Relative paths (results/, .cache/, the backtest SQLite fallback) resolve here, not in /app.
+WORKDIR /home/skopaq
 
 EXPOSE 8000
-
-# Health check for API mode
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Entry point script
-COPY docker/entrypoint.sh /entrypoint.sh
-USER root
-RUN chmod +x /entrypoint.sh
-USER skopaq
-
+# No image-level HEALTHCHECK: each compose service defines its own (api: /health; telegram and
+# scheduler: heartbeat files). Fly and Railway use their own checks.
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["api"]

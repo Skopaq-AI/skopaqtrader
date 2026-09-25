@@ -100,10 +100,10 @@ def _is_ollama_available() -> bool:
         _ollama_available = False
         return False
 
+    base_url = os.environ.get("SKOPAQ_OLLAMA_BASE_URL", _OLLAMA_BASE_URL)
     try:
         import urllib.request
 
-        base_url = os.environ.get("SKOPAQ_OLLAMA_BASE_URL", _OLLAMA_BASE_URL)
         req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=2) as resp:
             _ollama_available = resp.status == 200
@@ -111,7 +111,7 @@ def _is_ollama_available() -> bool:
         _ollama_available = False
 
     if _ollama_available:
-        logger.info("Ollama detected at %s — local fallback enabled", _OLLAMA_BASE_URL)
+        logger.info("Ollama detected at %s — local fallback enabled", base_url)
     return _ollama_available
 
 

@@ -6,6 +6,10 @@ primary_region = 'bom'
 
 [env]
   PYTHONUNBUFFERED = '1'
+  # Kite login links, and the Kite token fetched from the API app (skopaq-trader).
+  # If SKOPAQ_API_TOKEN is set on the API app, set the same value as a secret here.
+  SKOPAQ_PUBLIC_BASE_URL = 'https://skopaq-trader.fly.dev'
+  SKOPAQ_API_BASE_URL = 'https://skopaq-trader.fly.dev'
 
 # No HTTP service — this is a background worker
 [processes]

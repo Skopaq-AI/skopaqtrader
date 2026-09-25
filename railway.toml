@@ -1,6 +1,10 @@
+# Railway API service. Builds the shared root Dockerfile: the image runs as uid 1000 with
+# WORKDIR /home/skopaq, and it includes kiteconnect, so /api/kite/* work on Railway.
+# The entrypoint execs `python ...` start commands directly.
+
 [build]
 builder = "dockerfile"
-dockerfilePath = "docker/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "python -m skopaq.cli.main serve --host 0.0.0.0 --port $PORT"
