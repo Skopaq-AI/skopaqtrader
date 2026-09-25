@@ -74,6 +74,15 @@ class SkopaqConfig(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # ── Public URLs / API access ────────────────────────────────────────
+    # Public HTTPS URL of the API (Kite login links), e.g. the tunnel host
+    public_base_url: str = ""
+    # HTTP fallback for other processes to fetch the Kite token; never set on the api itself
+    api_base_url: str = ""
+    # When set, /api/chat/* and /api/kite/token require Bearer auth
+    api_token: SecretStr = SecretStr("")
+    cors_origins: str = "*"  # comma-separated browser origins; "" = none
+
     # ── Reflection / Memory ─────────────────────────────────────────────
     reflection_enabled: bool = True
     reflection_max_memory_entries: int = 50
@@ -116,6 +125,25 @@ class SkopaqConfig(BaseSettings):
     )
     daemon_session_log_dir: str = "logs/daemon"  # Session log directory
     daemon_heartbeat_interval_seconds: int = 300  # Heartbeat log interval (5 min)
+
+    # ── Scheduler (always-on host: docker compose `scheduler`) ─────────
+    # Plain str, not Literal: a typo fails only the scheduler, not every service.
+    scheduler_enabled: bool = True  # False: stay up and healthy, start no sessions (cutover)
+    scheduler_mode: str = "paper"  # paper | live (live also needs scheduler_confirm_live)
+    scheduler_confirm_live: bool = False  # like --confirm-live
+    scheduler_start: str = "09:15"  # IST, first daemon launch (scan follows the scan delay)
+    scheduler_last_start: str = "11:30"  # IST, end of the catch-up window if the host was down
+    scheduler_deadline: str = "15:45"  # IST, SIGTERM a session still running (EOD exit is 15:20)
+    scheduler_settle_at: str = "18:30"  # IST, `skopaq settle` backstop; "" = off
+    # IST, alert if the INDstocks token is missing or expires before the session ends; "" = off
+    scheduler_preflight: str = "08:45"
+    scheduler_poll_seconds: int = 30
+    scheduler_kill_after_seconds: int = 300  # SIGKILL this long after the deadline/stop SIGTERM
+    scheduler_state_dir: str = "~/scheduler"  # at-most-once markers (on the home volume)
+    # Optional dead-man's switch: GET URL on success, URL/fail on failure
+    scheduler_ping_url: str = ""
+    heartbeat_file: str = ""  # touched by long-running services for container health checks
+    nse_holidays: str = ""  # extra NSE closures, comma-separated YYYY-MM-DD
 
     # ── Regime Detection ──────────────────────────────────────────────
     regime_detection_enabled: bool = False  # Off until tested with live data

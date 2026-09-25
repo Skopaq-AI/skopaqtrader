@@ -20,13 +20,19 @@ Usage::
     calendar = NSEEventCalendar()
     scale = calendar.get_position_scale(date.today())
     # Feed into PositionSizer as calendar_scale multiplier
+
+Trading days (``is_trading_day``, ``daemon_block_reason``) come from the NSE
+holiday list below. They fail closed: a year with no list is not a trading
+day, so the daemon, the scheduler and the Telegram jobs stay idle until the
+list (or ``SKOPAQ_NSE_HOLIDAYS``) is updated.
 """
 
 from __future__ import annotations
 
 import calendar as cal
 import logging
-from datetime import date, timedelta
+import re
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -199,3 +205,94 @@ class NSEEventCalendar:
             # Unknown year — return empty (no false AVOID signals)
             logger.debug("No RBI dates configured for year %d", year)
             return set()
+
+
+# ── Trading days (NSE holidays) ──────────────────────────────────────────────
+
+IST = timezone(timedelta(hours=5, minutes=30))
+NSE_CLOSE = time(15, 30)
+
+# Weekday closures of the NSE equity segment, from the exchange's holiday circular.
+# Add next year's list every December. Special sessions (Muhurat trading, a Budget
+# Sunday) are not traded by the daemon, so they are not listed.
+NSE_TRADING_HOLIDAYS: dict[int, dict[date, str]] = {
+    2026: {
+        date(2026, 1, 26): "Republic Day",
+        date(2026, 3, 3): "Holi",
+        date(2026, 3, 26): "Shri Ram Navami",
+        date(2026, 3, 31): "Shri Mahavir Jayanti",
+        date(2026, 4, 3): "Good Friday",
+        date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+        date(2026, 5, 1): "Maharashtra Day",
+        date(2026, 5, 28): "Bakri Id",
+        date(2026, 6, 26): "Muharram",
+        date(2026, 9, 14): "Ganesh Chaturthi",
+        date(2026, 10, 2): "Mahatma Gandhi Jayanti",
+        date(2026, 10, 20): "Dussehra",
+        date(2026, 11, 10): "Diwali Balipratipada",
+        date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev",
+        date(2026, 12, 25): "Christmas",
+    },
+}
+
+
+def now_ist() -> datetime:
+    """The current time in IST (a function so tests can patch it)."""
+    return datetime.now(IST)
+
+
+def parse_extra_holidays(spec: str) -> dict[date, str]:
+    """Parse ``SKOPAQ_NSE_HOLIDAYS``: YYYY-MM-DD dates separated by commas and/or spaces.
+
+    Raises:
+        ValueError: naming the first entry that is not a valid date.
+    """
+    extra: dict[date, str] = {}
+    for part in re.split(r"[,\s]+", spec or ""):
+        if not part:
+            continue
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", part):
+                raise ValueError(part)
+            extra[date.fromisoformat(part)] = "SKOPAQ_NSE_HOLIDAYS"
+        except ValueError:
+            raise ValueError(
+                f"SKOPAQ_NSE_HOLIDAYS: {part!r} is not a YYYY-MM-DD date"
+            ) from None
+    return extra
+
+
+def trading_day_status(d: date, extra: str = "") -> tuple[bool, str]:
+    """Whether NSE trades on *d*, and if not, why.
+
+    A year counts as known when it has a built-in list or any extra date falls
+    in it; a date in an unknown year is not a trading day (fail closed).
+    """
+    if d.weekday() >= 5:
+        return False, d.strftime("%A")
+    extras = parse_extra_holidays(extra)
+    known = d.year in NSE_TRADING_HOLIDAYS or any(x.year == d.year for x in extras)
+    if not known:
+        return False, (
+            f"no NSE holiday list for {d.year}: add it to skopaq/risk/calendar.py "
+            "or SKOPAQ_NSE_HOLIDAYS"
+        )
+    name = NSE_TRADING_HOLIDAYS.get(d.year, {}).get(d) or extras.get(d)
+    if name:
+        return False, f"NSE holiday: {name}"
+    return True, ""
+
+
+def is_trading_day(d: date, extra: str = "") -> bool:
+    return trading_day_status(d, extra)[0]
+
+
+def daemon_block_reason(now: datetime, extra: str = "") -> Optional[str]:
+    """Why a daemon session must not start at *now*, or ``None`` if it may."""
+    now = now.astimezone(IST)
+    ok, reason = trading_day_status(now.date(), extra)
+    if not ok:
+        return reason
+    if now.time() >= NSE_CLOSE:
+        return "NSE closed at 15:30 IST"
+    return None
