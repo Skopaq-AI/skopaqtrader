@@ -91,3 +91,51 @@ def test_bridges_typesafe_key():
         os.environ.pop("TYPESAFE_API_KEY", None)
         assert "TYPESAFE_API_KEY" in bridge_env_vars(config)
         assert os.environ["TYPESAFE_API_KEY"] == "ts-key"
+
+
+def test_bridges_jev_base_url():
+    """SKOPAQ_JEV_BASE_URL → TYPESAFE_BASE_URL, so post screening uses the same gateway."""
+    from skopaq.llm.env_bridge import bridge_env_vars
+
+    config = TestBridgeEnvVars()._make_config()
+    config.jev_base_url = "https://openrouter.ai/api"  # a plain str field, not a secret
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("TYPESAFE_BASE_URL", None)
+        assert "TYPESAFE_BASE_URL" in bridge_env_vars(config)
+        assert os.environ["TYPESAFE_BASE_URL"] == "https://openrouter.ai/api"
+
+
+def test_empty_jev_base_url_is_not_bridged():
+    from skopaq.llm.env_bridge import bridge_env_vars
+
+    config = TestBridgeEnvVars()._make_config()
+    config.jev_base_url = ""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("TYPESAFE_BASE_URL", None)
+        assert "TYPESAFE_BASE_URL" not in bridge_env_vars(config)
+        assert "TYPESAFE_BASE_URL" not in os.environ
+
+
+def test_jev_base_url_is_not_paired_with_a_different_key():
+    """An existing TYPESAFE_API_KEY (say, a TypeSafe key) must not be sent to the gateway."""
+    from skopaq.llm.env_bridge import bridge_env_vars
+
+    config = TestBridgeEnvVars()._make_config(typesafe_api_key="openrouter-key")
+    config.jev_base_url = "https://openrouter.ai/api"
+    with patch.dict(os.environ, {"TYPESAFE_API_KEY": "typesafe-key"}, clear=False):
+        os.environ.pop("TYPESAFE_BASE_URL", None)
+        assert bridge_env_vars(config) == []
+        assert "TYPESAFE_BASE_URL" not in os.environ
+        assert os.environ["TYPESAFE_API_KEY"] == "typesafe-key"
+
+
+def test_jev_base_url_follows_a_matching_or_directly_set_key():
+    from skopaq.llm.env_bridge import bridge_env_vars
+
+    for configured, existing in (("or-key", "or-key"), ("", "or-key")):
+        config = TestBridgeEnvVars()._make_config(typesafe_api_key=configured)
+        config.jev_base_url = "https://openrouter.ai/api"
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": existing}, clear=False):
+            os.environ.pop("TYPESAFE_BASE_URL", None)
+            assert bridge_env_vars(config) == ["TYPESAFE_BASE_URL"]
+            assert os.environ["TYPESAFE_BASE_URL"] == "https://openrouter.ai/api"

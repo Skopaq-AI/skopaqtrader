@@ -24,7 +24,21 @@ _BRIDGE_MAP: dict[str, str] = {
     "perplexity_api_key": "PERPLEXITY_API_KEY",
     "openrouter_api_key": "OPENROUTER_API_KEY",
     "typesafe_api_key": "TYPESAFE_API_KEY",
+    # Not a secret: sends upstream's Jev post screening to the same gateway
+    "jev_base_url": "TYPESAFE_BASE_URL",
 }
+
+
+def _foreign_typesafe_key(config) -> bool:
+    """TYPESAFE_API_KEY is set to something other than SKOPAQ_TYPESAFE_API_KEY.
+
+    The gateway URL belongs with the configured key; bridging it next to a
+    different key would send that key to the gateway.
+    """
+    env_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    secret = getattr(config, "typesafe_api_key", None)
+    configured = secret.get_secret_value().strip() if secret is not None else ""
+    return bool(env_key and configured and env_key != configured)
 
 
 def bridge_env_vars(config=None) -> list[str]:
@@ -54,6 +68,13 @@ def bridge_env_vars(config=None) -> list[str]:
 
         value = secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret)
         if not value:
+            continue
+
+        if env_var == "TYPESAFE_BASE_URL" and _foreign_typesafe_key(config):
+            logger.warning(
+                "TYPESAFE_API_KEY differs from SKOPAQ_TYPESAFE_API_KEY: post screening stays "
+                "on its own endpoint rather than sending that key to SKOPAQ_JEV_BASE_URL"
+            )
             continue
 
         os.environ[env_var] = value

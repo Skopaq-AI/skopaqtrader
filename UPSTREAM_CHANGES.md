@@ -126,6 +126,24 @@ avoid that. `SkopaqTradingGraph` turns it on.
 **Backward compatible:** yes — off by default; upstream's CLI and tests run
 the sequential graph unchanged.
 
+### 7. Jev endpoint from `TYPESAFE_BASE_URL`
+
+**Files:** `agents/post_screen.py`
+
+- The System One URL is built per request from `TYPESAFE_BASE_URL` (the
+  TypeSafe SDK's own variable) plus `/v1/systemone`, instead of the
+  hard-coded `https://api.typesafe.ai/v1/systemone`. Unset or blank, it is
+  still api.typesafe.ai; a trailing slash is ignored, as in the SDK.
+
+**Why:** gateways such as OpenRouter serve Jev with their own key
+(`https://openrouter.ai/api`). With the URL hard-coded, pointing Skopaq at a
+gateway would send the gateway key to api.typesafe.ai and screening would
+quietly stop. `skopaq/llm/env_bridge.py` copies `SKOPAQ_JEV_BASE_URL` into
+`TYPESAFE_BASE_URL`. The default model, `jev-latest`, is also a name
+OpenRouter accepts.
+**Backward compatible:** yes — without `TYPESAFE_BASE_URL` the request is
+unchanged, and upstream's `test_post_screen.py` passes as is.
+
 ## Not carried over from the v0.2.0 base
 
 | Former change | Why dropped |
