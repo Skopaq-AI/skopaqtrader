@@ -27,7 +27,7 @@ CLI/API → SkopaqTradingGraph → [upstream LangGraph agents] → TradeSignal
 PRE_OPEN → SCANNING → ANALYZING → TRADING → MONITORING → CLOSING → REPORTING
 ```
 
-The daemon (`skopaq/execution/daemon.py`) is a finite state machine that composes all subsystems into a single unattended trading session.
+The daemon (`skopaq/execution/daemon.py`) is a finite state machine that composes all subsystems into a single unattended trading session. On an always-on host the scheduler (`skopaq/execution/scheduler.py`, `skopaq schedule`, the compose `scheduler` service) starts one session per NSE trading day at 09:15 IST, catches up until 11:30 if the host was down, stops a session still running at 15:45, and in live mode keeps a failed session's positions protected with `skopaq monitor`.
 
 ## MCP Server (Claude Code Integration)
 
@@ -59,15 +59,16 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 40 
 ## Common Commands
 
 ```bash
-# Run unit tests (674 tests, no API keys needed)
+# Run unit tests (~900 tests, no API keys needed)
 python3 -m pytest tests/unit/ -x -q
 
 # Run a specific test file
 python3 -m pytest tests/unit/execution/test_daemon.py -v
 
-# CI (.github/workflows/ci.yml) runs on every PR: unit tests on Python 3.11/3.12,
-# lint for syntax errors and undefined names (ruff --select E9,F63,F7,F82), and
-# upstream TradingAgents' own suite against our tradingagents/ (pinned UPSTREAM_REF)
+# CI (.github/workflows/ci.yml) runs on every PR: unit tests on Python 3.11/3.12/3.14,
+# lint for syntax errors and undefined names (ruff --select E9,F63,F7,F82),
+# upstream TradingAgents' own suite against our tradingagents/ (pinned UPSTREAM_REF),
+# and a build of the Docker image with the compose stack brought up and health-checked
 
 # Run integration tests (requires .env with real keys)
 python3 -m pytest tests/integration/ -v -m integration
@@ -79,6 +80,7 @@ skopaq trade RELIANCE      # Analysis + execution (paper default)
 skopaq scan                # Scanner cycle
 skopaq chat                # Interactive AI chatbot (Claude Code-style)
 skopaq daemon --once --paper  # Full autonomous session
+skopaq schedule --check    # Show the scheduler's plan (the compose service runs `skopaq schedule`)
 skopaq monitor             # Monitor existing positions
 skopaq settle              # Settle past decisions whose holding window has traded
 skopaq memory legacy       # Show pre-v0.5.1 agent memories (--export FILE, --delete)
@@ -169,9 +171,10 @@ skopaq/
 
 ## Deployment
 
+- **Mac mini / any Docker host** — `docker-compose.yml` (api, telegram, scheduler on persistent volumes; one image, `Dockerfile`, linux/arm64 and amd64). Runbook: `docs/deployment/mac-mini.md`; checks: `scripts/macmini/verify.sh`
 - **Railway API** — `railway.toml` — FastAPI server (always running)
-- **Railway Daemon** — `railway-daemon.toml` — Cron job at 09:10 IST weekdays
+- **Railway Daemon** — `railway-daemon.toml` — Cron job at 09:15 IST weekdays. Disable it before running the compose scheduler, or two daemons trade the same account
 - **Vercel** — `frontend/` — Next.js dashboard
 - **Supabase** — PostgreSQL + auth + agent memory
 - **Upstash** — Redis for semantic LLM cache (LangCache)
-- **Cloudflare Tunnel** — Static IP for INDstocks API whitelist
+- **Cloudflare Tunnel** — inbound HTTPS to the API (Kite login callback). It does not give a static outbound IP: INDstocks whitelists the host's egress IPv4 (`docs/deployment/mac-mini.md` §3)
