@@ -1,6 +1,10 @@
 # Scheduled Jobs
 
-The Telegram bot runs three scheduled jobs daily during market hours. These are configured in `skopaq/telegram_bot.py` using `python-telegram-bot`'s built-in job queue.
+The Telegram bot runs three scheduled jobs on NSE trading days. They are configured in `skopaq/telegram_bot.py` using `python-telegram-bot`'s built-in job queue: each runs Monday to Friday (`days=(1, 2, 3, 4, 5)`; in python-telegram-bot 20+, 0 is Sunday) and returns early on NSE holidays (`skopaq/risk/calendar.py`, plus `SKOPAQ_NSE_HOLIDAYS`).
+
+!!! note "Not the trading daemon"
+    These jobs only send messages. Autonomous trading sessions are started by the
+    compose `scheduler` service ([Mac mini runbook](../deployment/mac-mini.md)).
 
 ## Job Schedule
 
@@ -18,17 +22,18 @@ Sends a reminder to connect to Zerodha if the Kite access token is not set.
 
 1. Checks if `get_access_token()` returns a valid token
 2. If connected: sends "Kite connected -- ready for market open"
-3. If not connected: sends login link `https://skopaq-trader.fly.dev/api/kite/login`
+3. If not connected: sends login link `<SKOPAQ_PUBLIC_BASE_URL>/api/kite/login` (or says the link is not configured when `SKOPAQ_PUBLIC_BASE_URL` is empty)
 
 **Why 09:00?**
 
 NSE pre-open session starts at 09:00. Logging in early ensures the token is ready before 09:15 when regular trading begins.
 
 ```python
-# IST 9:00 = UTC 3:30
+# IST 9:00 = UTC 3:30, Monday to Friday
 app.job_queue.run_daily(
     job_pre_market_login,
     time=dt_time(hour=3, minute=30, tzinfo=timezone.utc),
+    days=(1, 2, 3, 4, 5),
     name="pre_market_login",
 )
 ```
@@ -105,10 +110,14 @@ All three jobs use `run_daily` from `python-telegram-bot`'s `JobQueue`:
 ```python
 from datetime import time as dt_time, timezone
 
+# Monday to Friday (PTB 20+: 0 = Sunday); each job also returns early on NSE holidays.
+weekdays = (1, 2, 3, 4, 5)
+
 # IST 9:00 = UTC 3:30
 app.job_queue.run_daily(
     job_pre_market_login,
     time=dt_time(hour=3, minute=30, tzinfo=timezone.utc),
+    days=weekdays,
     name="pre_market_login",
 )
 
@@ -116,6 +125,7 @@ app.job_queue.run_daily(
 app.job_queue.run_daily(
     job_market_scan,
     time=dt_time(hour=3, minute=55, tzinfo=timezone.utc),
+    days=weekdays,
     name="market_scan",
 )
 
@@ -123,9 +133,13 @@ app.job_queue.run_daily(
 app.job_queue.run_daily(
     job_eod_summary,
     time=dt_time(hour=10, minute=5, tzinfo=timezone.utc),
+    days=weekdays,
     name="eod_summary",
 )
 ```
+
+With `SKOPAQ_HEARTBEAT_FILE` set (docker compose sets it), a fourth job touches that file
+every minute for the container health check.
 
 !!! warning "UTC times"
     All times are specified in UTC. IST = UTC + 5:30. If you change these, remember to convert correctly.
@@ -160,10 +174,14 @@ async def job_custom(context: ContextTypes.DEFAULT_TYPE) -> None:
 app.job_queue.run_daily(
     job_custom,
     time=dt_time(hour=6, minute=0, tzinfo=timezone.utc),  # 11:30 IST
+    days=(1, 2, 3, 4, 5),
     name="custom_job",
 )
 ```
 
 ## Weekday-Only Execution
 
-The scheduled jobs run every day including weekends. Since the market is closed on weekends, the scan and EOD jobs will either return empty data or skip gracefully (Kite token may be expired). For production use, consider adding a weekday check at the top of each job function.
+`days=(1, 2, 3, 4, 5)` keeps the jobs off weekends, and each job starts with
+`if not _is_trading_day_ist(): return`, which skips NSE holidays. Add the same check to
+custom market-hours jobs. When the current year has no NSE holiday list, the jobs stay
+silent until it is added (see the [Mac mini runbook](../deployment/mac-mini.md), Holidays).

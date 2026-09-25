@@ -582,7 +582,7 @@ skopaqtrader/
 │
 ├── frontend/                   # Next.js dashboard (Vercel)
 ├── supabase/                   # Database migrations
-├── docker/                     # Dockerfile for Railway
+├── docker/                     # Container entrypoint (entrypoint.sh)
 ├── .claude/                    # Claude Code integration
 │   ├── skills/                 # Custom slash commands (/quote, /analyze, /scan, etc.)
 │   ├── settings.json           # Auto-allowed MCP tools
@@ -597,6 +597,9 @@ skopaqtrader/
 ├── UPSTREAM_CHANGES.md         # All modifications to vendored code (34 changes)
 ├── CONTRIBUTING.md             # Contribution guidelines
 ├── pyproject.toml              # Python project config
+├── Dockerfile                  # One image: compose (Mac mini), Fly, Railway
+├── docker-compose.yml          # Always-on stack: api + telegram + scheduler
+├── scripts/macmini/verify.sh   # Mac mini readiness checks
 ├── railway.toml                # Railway API server config
 ├── railway-daemon.toml         # Railway daemon cron config
 └── LICENSE                     # Apache 2.0
@@ -632,10 +635,7 @@ python -m pytest --cov=skopaq --cov=tradingagents -v
 The fastest way to get started. One image, all services.
 
 ```bash
-# Pull and run (when published to Docker Hub)
-docker pull skopaqtrader/skopaqtrader:latest
-
-# Or build locally
+# Build locally (native arm64 on Apple Silicon, amd64 elsewhere)
 git clone https://github.com/samuelvinay91/skopaqtrader.git
 cd skopaqtrader
 docker build -t skopaqtrader/skopaqtrader .
@@ -659,9 +659,12 @@ docker run --rm --env-file .env skopaqtrader/skopaqtrader status     # Health ch
 ### Docker Compose (recommended)
 
 ```bash
-cp .env.example .env   # Add your API keys
-docker compose up -d   # Starts API + Telegram bot
+cp .env.example .env          # Add your API keys
+docker compose up -d --build  # API + Telegram bot + scheduler (daemon on NSE trading days)
 ```
+
+Running 24/7 on a Mac mini: see [docs/deployment/mac-mini.md](docs/deployment/mac-mini.md)
+(host setup, `scripts/macmini/verify.sh`, daily operations, going live).
 
 ### Available Services
 
@@ -670,6 +673,7 @@ docker compose up -d   # Starts API + Telegram bot
 | `api` | Default | FastAPI backend (port 8000) |
 | `chat` | Interactive | Claude Code-style AI chatbot |
 | `telegram` | Background | Telegram bot (@Skopaq_bot) |
+| `scheduler` | Background | One daemon session per NSE trading day (09:15 IST) |
 | `mcp` | stdio | MCP server for Claude Code |
 | `daemon` | One-shot | Paper trading session |
 | `daemon-live` | One-shot | LIVE trading session |
@@ -677,6 +681,7 @@ docker compose up -d   # Starts API + Telegram bot
 | `scan` | One-shot | Market scanner |
 | `status` | One-shot | System health check |
 | `shell` | Interactive | Bash shell for debugging |
+| any `skopaq` command | One-shot | e.g. `docker compose exec api skopaq halt "reason"` |
 
 ## Cloud Deployment
 
@@ -685,12 +690,13 @@ docker compose up -d   # Starts API + Telegram bot
 
 | Service | Config | Purpose |
 |---------|--------|---------|
+| **Mac mini M4** (Docker Compose) | [`docker-compose.yml`](docker-compose.yml) | api + telegram + scheduler ([docs/deployment/mac-mini.md](docs/deployment/mac-mini.md)) |
 | **Railway** (API) | [`railway.toml`](railway.toml) | FastAPI backend server |
-| **Railway** (Daemon) | [`railway-daemon.toml`](railway-daemon.toml) | Autonomous trading cron (09:10 IST, weekdays) |
+| **Railway** (Daemon) | [`railway-daemon.toml`](railway-daemon.toml) | Autonomous trading cron (09:15 IST weekdays; the daemon skips NSE holidays) |
 | **Vercel** | `frontend/` | Next.js dashboard |
 | **Supabase** | `supabase/` | PostgreSQL + Auth + agent memory |
 | **Upstash** | — | Serverless Redis (semantic LLM cache) |
-| **Cloudflare Tunnel** | — | Static IP for INDstocks API whitelist |
+| **Cloudflare Tunnel** | — | Inbound HTTPS to the API (Kite OAuth callback/postback). Not a static outbound IP: INDstocks needs your static egress IPv4 whitelisted |
 
 ## Upstream Modifications
 
