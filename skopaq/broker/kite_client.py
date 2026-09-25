@@ -22,7 +22,7 @@ Usage::
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -41,29 +41,63 @@ from skopaq.broker.models import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level access token cache
+# Module-level access token cache. _access_token_set_at is when a token from
+# set_access_token, the token file or the API was obtained; None for a token from the
+# environment or .env, whose age is unknown (those are used as given).
 _access_token: str = ""
+_access_token_set_at: Optional[datetime] = None
 
 # Persistent storage: /data on Fly.io (volume mount), /tmp locally
 import os as _os
 _DATA_DIR = "/data" if _os.path.isdir("/data") else "/tmp"
 _TOKEN_FILE = _os.path.join(_DATA_DIR, "skopaq_kite_token.json")
 
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _kite_day_start(now: Optional[datetime] = None) -> datetime:
+    """The most recent 06:00 IST: every Kite access token expires then."""
+    now = (now or datetime.now(timezone.utc)).astimezone(_IST)
+    start = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    return start if now >= start else start - timedelta(days=1)
+
+
+def _read_token_file() -> tuple[str, Optional[datetime]]:
+    """(token, set_at) from the token file; ("", None) when absent or unreadable.
+
+    set_at falls back to the file's modification time when it is missing or invalid.
+    """
+    import json
+
+    try:
+        with open(_TOKEN_FILE) as f:
+            data = json.load(f)
+        token = str(data.get("access_token", "") or "")
+        try:
+            set_at = datetime.fromisoformat(str(data["set_at"]))
+        except (KeyError, TypeError, ValueError):
+            set_at = datetime.fromtimestamp(_os.path.getmtime(_TOKEN_FILE), timezone.utc)
+        if set_at.tzinfo is None:
+            set_at = set_at.replace(tzinfo=timezone.utc)
+        return token, set_at
+    except (OSError, ValueError, AttributeError):
+        return "", None
+
 
 def set_access_token(token: str) -> None:
     """Set the Kite access token and persist to file + env var."""
-    global _access_token
+    global _access_token, _access_token_set_at
     _access_token = token
+    _access_token_set_at = datetime.now(timezone.utc)
 
     # Persist to file so it survives module reloads
     import json
-    from datetime import datetime, timezone
 
     try:
         with open(_TOKEN_FILE, "w") as f:
             json.dump({
                 "access_token": token,
-                "set_at": datetime.now(timezone.utc).isoformat(),
+                "set_at": _access_token_set_at.isoformat(),
             }, f)
         logger.info("Kite access token set and persisted")
     except Exception as exc:
@@ -74,39 +108,51 @@ def set_access_token(token: str) -> None:
     os.environ["SKOPAQ_KITE_ACCESS_TOKEN"] = token
 
 
-def get_access_token() -> str:
-    """Get the current access token.
+def get_access_token(remote: bool = True) -> str:
+    """Get the current access token ("" when there is none).
 
     Priority:
     1. Module-level cache (fastest)
-    2. Persisted file (/tmp/skopaq_kite_token.json)
+    2. Persisted file (/data/skopaq_kite_token.json, else /tmp; docker compose
+       shares /data between the api and the Telegram bot)
     3. SKOPAQ_KITE_ACCESS_TOKEN env var
     4. SkopaqConfig (from .env)
+    5. Optional (remote=True): GET {SKOPAQ_API_BASE_URL}/api/kite/token from the API
+       process (Bearer SKOPAQ_API_TOKEN when set), for a process on another machine
+
+    Kite tokens expire at 06:00 IST the next day: a cached or persisted token obtained
+    before the most recent 06:00 IST is skipped, and so is the same token in the env var
+    (set_access_token puts it there). The file is left in place: the api process
+    overwrites it at the next OAuth login.
     """
-    global _access_token
-    if _access_token:
-        return _access_token
-
-    # Try persisted file
-    import json
-
-    try:
-        with open(_TOKEN_FILE) as f:
-            data = json.load(f)
-            token = data.get("access_token", "")
-            if token:
-                _access_token = token
-                logger.info("Kite token restored from file")
-                return token
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-
-    # Try env var
+    global _access_token, _access_token_set_at
     import os
 
+    day_start = _kite_day_start()
+    stale: set[str] = set()
+
+    if _access_token:
+        if _access_token_set_at is None or _access_token_set_at >= day_start:
+            return _access_token
+        logger.info("Cached Kite token expired at 06:00 IST; looking for a new one")
+        stale.add(_access_token)
+        if os.environ.get("SKOPAQ_KITE_ACCESS_TOKEN") == _access_token:
+            os.environ.pop("SKOPAQ_KITE_ACCESS_TOKEN", None)
+        _access_token, _access_token_set_at = "", None
+
+    # Try persisted file
+    token, set_at = _read_token_file()
+    if token:
+        if set_at is not None and set_at >= day_start:
+            _access_token, _access_token_set_at = token, set_at
+            logger.info("Kite token restored from file")
+            return token
+        stale.add(token)
+
+    # Try env var
     env_token = os.environ.get("SKOPAQ_KITE_ACCESS_TOKEN", "")
-    if env_token:
-        _access_token = env_token
+    if env_token and env_token not in stale:
+        _access_token, _access_token_set_at = env_token, None
         logger.info("Kite token restored from env var")
         return env_token
 
@@ -114,23 +160,30 @@ def get_access_token() -> str:
     try:
         from skopaq.config import SkopaqConfig
 
-        config = SkopaqConfig()
-        cfg_token = config.kite_access_token.get_secret_value()
-        if cfg_token:
-            _access_token = cfg_token
+        cfg = SkopaqConfig()
+        cfg_token = cfg.kite_access_token.get_secret_value()
+        if cfg_token and cfg_token not in stale:
+            _access_token, _access_token_set_at = cfg_token, None
             return cfg_token
     except Exception:
-        pass
+        return ""
 
-    # Try fetching from the API server (for Telegram bot running on separate machine)
+    # Try fetching from the API server (a Telegram bot on another machine; e.g. Fly).
+    # Only when configured: never set SKOPAQ_API_BASE_URL on the API process itself.
+    base = cfg.api_base_url.rstrip("/")
+    if not remote or not base:
+        return ""
     try:
         import httpx
 
-        resp = httpx.get("https://skopaq-trader.fly.dev/api/kite/token", timeout=5)
+        headers = {}
+        api_token = cfg.api_token.get_secret_value()
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+        resp = httpx.get(f"{base}/api/kite/token", headers=headers, timeout=5)
         if resp.status_code == 200:
             token = resp.json().get("access_token", "")
-            if token:
-                _access_token = token
+            if token and token not in stale:
                 # Persist locally so we don't keep fetching
                 set_access_token(token)
                 logger.info("Kite token fetched from API server")

@@ -147,3 +147,46 @@ async def test_halt_and_resume_commands(allow, tmp_path, monkeypatch):
     await telegram_bot.cmd_resume(update, SimpleNamespace(args=[]))
     assert not kill_switch.status(use_cache=False).halted
 
+
+
+def test_kite_login_url_comes_from_config(monkeypatch):
+    monkeypatch.setenv("SKOPAQ_PUBLIC_BASE_URL", "")
+    assert telegram_bot._kite_login_url() == ""
+
+    monkeypatch.setenv("SKOPAQ_PUBLIC_BASE_URL", "https://x.example/")
+    assert telegram_bot._kite_login_url() == "https://x.example/api/kite/login"
+
+
+@pytest.mark.asyncio
+async def test_login_without_a_public_url_says_so(allow, monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setenv("SKOPAQ_PUBLIC_BASE_URL", "")
+    update = _update(111)
+    kite = types.ModuleType("skopaq.broker.kite_client")  # kiteconnect is a deploy extra
+    kite.get_access_token = lambda: ""
+    monkeypatch.setitem(sys.modules, "skopaq.broker.kite_client", kite)
+
+    await telegram_bot.cmd_login(update, MagicMock())
+    assert "SKOPAQ_PUBLIC_BASE_URL" in update.message.reply_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_market_jobs_skip_non_trading_days(monkeypatch):
+    from datetime import datetime
+
+    from skopaq.risk.calendar import IST
+
+    monkeypatch.setenv("SKOPAQ_NSE_HOLIDAYS", "")
+    monkeypatch.setattr("skopaq.risk.calendar.now_ist",
+                        lambda: datetime(2026, 10, 2, 9, 0, tzinfo=IST))  # a holiday
+    monkeypatch.setattr(telegram_bot, "alert_chat_ids", {111})
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+
+    for job in (telegram_bot.job_pre_market_login, telegram_bot.job_market_scan,
+                telegram_bot.job_eod_summary):
+        await job(context)
+
+    context.bot.send_message.assert_not_awaited()

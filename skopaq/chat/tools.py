@@ -37,24 +37,13 @@ def _get_kite_client():
 
     Only returns a client if both API key AND access token are available.
     The access token is checked from memory/file/env only — no remote
-    fetch during this call (to avoid hanging in tests or offline use).
+    fetch during this call (to avoid hanging in tests or offline use) —
+    and a token past its 06:00 IST expiry is skipped.
     """
     try:
-        from skopaq.broker.kite_client import KiteClient
+        from skopaq.broker.kite_client import KiteClient, get_access_token
 
-        # Check memory-level token only (don't trigger remote fetch)
-        import skopaq.broker.kite_client as _kmod
-
-        token = _kmod._access_token
-        if not token:
-            # Check file
-            try:
-                import json
-
-                with open(_kmod._TOKEN_FILE) as f:
-                    token = json.load(f).get("access_token", "")
-            except Exception:
-                pass
+        token = get_access_token(remote=False)
         if not token:
             return None
 

@@ -14,7 +14,7 @@ Commands:
     /login          — Send Kite Connect login link
     /help           — List commands
 
-Scheduled jobs:
+Scheduled jobs (Monday to Friday, skipped on NSE holidays):
     09:00 IST — Pre-market Kite login reminder
     09:25 IST — Auto market scan (top movers)
     15:35 IST — EOD P&L summary
@@ -27,7 +27,9 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 
@@ -177,7 +179,11 @@ async def cmd_halt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from skopaq.execution import kill_switch
 
     reason = " ".join(context.args or []) or "halted from Telegram"
-    where = kill_switch.halt(reason, by=f"telegram:{update.message.chat.id}")
+    try:
+        where = kill_switch.halt(reason, by=f"telegram:{update.message.chat.id}")
+    except RuntimeError as exc:  # neither the halt file nor Supabase could record it
+        await update.message.reply_text(f"NOT halted: {exc}")
+        return
     shared = "supabase:system_flags" in where
     await update.message.reply_text(
         f"Trading HALTED: {reason}\n"
@@ -576,13 +582,58 @@ async def send_alert(app: Application, chat_id: int, message: str) -> None:
 
 # ── Scheduled Jobs ───────────────────────────────────────────────────────────
 
+_LOGIN_LINK_MISSING = (
+    "Kite login link not configured: set SKOPAQ_PUBLIC_BASE_URL to the API's public HTTPS URL."
+)
+
+
+def _kite_login_url() -> str:
+    """The API's Kite login URL (SKOPAQ_PUBLIC_BASE_URL), or "" when not configured."""
+    from skopaq.config import SkopaqConfig
+
+    base = SkopaqConfig().public_base_url.rstrip("/")
+    return f"{base}/api/kite/login" if base else ""
+
+
+def _is_trading_day_ist() -> bool:
+    """Whether today (IST) is an NSE trading day; a bad SKOPAQ_NSE_HOLIDAYS runs the jobs."""
+    from skopaq.config import SkopaqConfig
+    from skopaq.risk.calendar import is_trading_day, now_ist
+
+    try:
+        return is_trading_day(now_ist().date(), SkopaqConfig().nse_holidays)
+    except ValueError:
+        logger.exception("Could not check the NSE calendar")
+        return True
+
+
+async def _heartbeat_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Touch SKOPAQ_HEARTBEAT_FILE: the container health check reads its age."""
+    path = Path(context.job.data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def _kite_token() -> str:
+    """The current Kite token, re-read rather than taken from this process's cache.
+
+    The api process writes the token file at each OAuth login (shared /data volume under
+    docker compose), so a new login is seen here; get_access_token() skips a token past
+    its 06:00 IST expiry.
+    """
+    import skopaq.broker.kite_client as kite
+
+    kite._access_token = ""
+    return kite.get_access_token()
+
 
 async def job_pre_market_login(context: ContextTypes.DEFAULT_TYPE) -> None:
     """9:00 AM IST — Send Kite login link before market opens."""
-    from skopaq.broker.kite_client import get_access_token
+    if not _is_trading_day_ist():
+        return
 
+    token = _kite_token()
     for chat_id in list(alert_chat_ids):
-        token = get_access_token()
         if token:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -592,8 +643,7 @@ async def job_pre_market_login(context: ContextTypes.DEFAULT_TYPE) -> None:
                 ),
             )
         else:
-            api_key = os.environ.get("SKOPAQ_KITE_API_KEY", "")
-            login_url = f"https://skopaq-trader.fly.dev/api/kite/login"
+            login_url = _kite_login_url()
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
@@ -601,19 +651,25 @@ async def job_pre_market_login(context: ContextTypes.DEFAULT_TYPE) -> None:
                     f"Tap to login: {login_url}\n\n"
                     "After login, I'll auto-scan the market at 9:25 IST "
                     "and send you the top picks."
-                ),
+                ) if login_url else f"Good morning! Kite is not connected.\n{_LOGIN_LINK_MISSING}",
             )
 
 
 async def job_market_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     """9:25 AM IST — Auto-scan market after prices settle."""
-    from skopaq.broker.kite_client import get_access_token
+    if not _is_trading_day_ist():
+        return
 
-    if not get_access_token():
+    token = _kite_token()
+    if not token:
+        login_url = _kite_login_url()
         for chat_id in list(alert_chat_ids):
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Kite not connected. Please login first:\nhttps://skopaq-trader.fly.dev/api/kite/login",
+                text=(
+                    f"Kite not connected. Please login first:\n{login_url}"
+                    if login_url else f"Kite not connected. {_LOGIN_LINK_MISSING}"
+                ),
             )
         return
 
@@ -628,7 +684,7 @@ async def job_market_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         from skopaq.broker.kite_client import KiteClient
 
         api_key = os.environ.get("SKOPAQ_KITE_API_KEY", "")
-        client = KiteClient(api_key=api_key, access_token=get_access_token())
+        client = KiteClient(api_key=api_key, access_token=token)
 
         symbols = [
             "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS",
@@ -679,15 +735,19 @@ async def job_market_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def job_eod_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
     """3:35 PM IST — End of day P&L summary."""
-    from skopaq.broker.kite_client import get_access_token, KiteClient
+    if not _is_trading_day_ist():
+        return
 
-    if not get_access_token():
+    token = _kite_token()
+    if not token:
         return
 
     try:
+        from skopaq.broker.kite_client import KiteClient
+
         _ensure_infra()
         api_key = os.environ.get("SKOPAQ_KITE_API_KEY", "")
-        client = KiteClient(api_key=api_key, access_token=get_access_token())
+        client = KiteClient(api_key=api_key, access_token=token)
 
         positions = await client.get_positions()
         funds = await client.get_funds()
@@ -721,11 +781,12 @@ async def job_eod_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send Kite login link."""
     alert_chat_ids.add(update.message.chat.id)
-    login_url = "https://skopaq-trader.fly.dev/api/kite/login"
+    login_url = _kite_login_url()
 
-    from skopaq.broker.kite_client import get_access_token
-    if get_access_token():
+    if _kite_token():
         await update.message.reply_text("Already connected to Zerodha!")
+    elif not login_url:
+        await update.message.reply_text(_LOGIN_LINK_MISSING)
     else:
         await update.message.reply_text(
             f"Tap to connect Zerodha:\n{login_url}"
@@ -749,8 +810,7 @@ def main() -> None:
             token = token.get_secret_value()
 
     if not token:
-        print("Error: SKOPAQ_TELEGRAM_BOT_TOKEN not set")
-        return
+        sys.exit("Error: SKOPAQ_TELEGRAM_BOT_TOKEN not set")
 
     allowed = _allowed_chat_ids()
     if not allowed:
@@ -777,10 +837,14 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, authorized(handle_text)))
 
     # ── Scheduled jobs (IST = UTC+5:30) ──────────────────────────
+    # Monday to Friday (PTB 20+: 0 = Sunday); each job also returns early on NSE holidays.
+    weekdays = (1, 2, 3, 4, 5)
+
     # IST 9:00 = UTC 3:30
     app.job_queue.run_daily(
         job_pre_market_login,
         time=dt_time(hour=3, minute=30, tzinfo=timezone.utc),
+        days=weekdays,
         name="pre_market_login",
     )
 
@@ -788,6 +852,7 @@ def main() -> None:
     app.job_queue.run_daily(
         job_market_scan,
         time=dt_time(hour=3, minute=55, tzinfo=timezone.utc),
+        days=weekdays,
         name="market_scan",
     )
 
@@ -795,10 +860,18 @@ def main() -> None:
     app.job_queue.run_daily(
         job_eod_summary,
         time=dt_time(hour=10, minute=5, tzinfo=timezone.utc),
+        days=weekdays,
         name="eod_summary",
     )
 
-    print("Scheduled jobs:")
+    # Container health check (docker compose): the heartbeat file's age
+    from skopaq.config import SkopaqConfig
+
+    hb = SkopaqConfig().heartbeat_file
+    if hb:
+        app.job_queue.run_repeating(_heartbeat_job, interval=60, first=1, data=hb, name="heartbeat")
+
+    print("Scheduled jobs (Mon-Fri, NSE trading days):")
     print("  09:00 IST — Pre-market login reminder")
     print("  09:25 IST — Auto market scan")
     print("  15:35 IST — EOD P&L summary")
