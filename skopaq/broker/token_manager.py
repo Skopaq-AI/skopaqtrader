@@ -30,6 +30,11 @@ WARN_THRESHOLDS = [
     timedelta(minutes=10),
 ]
 
+# (expires_at, threshold minutes) this process has already sent to Telegram. Module level,
+# not per instance: callers that build a TokenManager per request or per call (MCP tools,
+# the chat tools) would otherwise send the same warning every time.
+_NOTIFIED: set[tuple[str, int]] = set()
+
 
 @dataclass
 class TokenHealth:
@@ -115,8 +120,12 @@ class TokenManager:
             warning=warning,
         )
 
-    def get_health(self) -> TokenHealth:
+    def get_health(self, notify: bool = True) -> TokenHealth:
         """Check current token validity and remaining time.
+
+        *notify*: log and send (Telegram) an expiry warning, at most once per process for
+        each threshold of a given token. Pass False from probes such as ``/health``, which
+        the compose health check polls every 30 s: the warning is still returned.
 
         Priority:
         1. Encrypted token file (``~/.skopaq/token.enc``) — for local use
@@ -184,20 +193,8 @@ class TokenManager:
             if remaining <= threshold and mins not in self._warned_thresholds:
                 warning = f"Token expires in {remaining}. Refresh from INDstocks dashboard."
                 self._warned_thresholds.add(mins)
-                logger.warning(warning)
-                # Notify via Telegram
-                try:
-                    import asyncio
-                    from skopaq.notifications import notify
-
-                    msg = f"⚠️ Token Warning\n\n{warning}"
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(notify(msg))
-                    except RuntimeError:
-                        pass
-                except Exception:
-                    pass
+                if notify:
+                    _notify_expiry(warning, expires_at, remaining)
                 break
 
         return TokenHealth(
@@ -221,6 +218,49 @@ class TokenManager:
             TOKEN_FILE.unlink()
         self._warned_thresholds.clear()
         logger.info("Token cleared")
+
+
+def session_token_problem(health: TokenHealth, required_until: datetime) -> str:
+    """Why *health* cannot carry a session that needs the broker until *required_until*.
+
+    Returns "" when it can. The INDstocks client needs the token on every request, so a
+    token that expires mid-session leaves the positions it opened without quotes, stop-loss
+    or exit. An env-var token carries no expiry and is assumed to last 24 h.
+    """
+    if not health.valid:
+        return f"INDstocks token invalid: {health.warning}"
+    expires_at = health.expires_at
+    if isinstance(expires_at, datetime) and expires_at < required_until:
+        ist = timezone(timedelta(hours=5, minutes=30))
+        return (
+            f"INDstocks token expires at {expires_at.astimezone(ist):%Y-%m-%d %H:%M} IST, "
+            f"before the session ends ({required_until.astimezone(ist):%H:%M} IST). "
+            "Set a fresh token: skopaq token set <token>"
+        )
+    return ""
+
+
+def _notify_expiry(warning: str, expires_at: datetime, remaining: timedelta) -> None:
+    """Log *warning* and send it to Telegram, once per process per threshold of this token."""
+    crossed = [int(t.total_seconds() / 60) for t in WARN_THRESHOLDS if remaining <= t]
+    key = (expires_at.isoformat(), min(crossed))
+    if key in _NOTIFIED:
+        return
+    _NOTIFIED.update((expires_at.isoformat(), mins) for mins in crossed)
+    logger.warning(warning)
+    try:
+        import asyncio
+
+        from skopaq.notifications import notify
+
+        msg = f"⚠️ Token Warning\n\n{warning}"
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(notify(msg))
+        except RuntimeError:
+            pass
+    except Exception:
+        pass
 
 
 class TokenExpiredError(Exception):

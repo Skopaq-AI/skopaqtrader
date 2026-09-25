@@ -1,5 +1,6 @@
 """Tests for INDstocks token manager."""
 
+import asyncio
 import json
 import time
 from datetime import timedelta
@@ -128,6 +129,26 @@ class TestTokenManager:
         health = mgr.get_health()
         assert health.valid
         assert health.warning  # Should have a warning
+
+    async def test_expiry_warning_is_sent_once_per_token_and_threshold(self, mgr, monkeypatch):
+        from skopaq.broker import token_manager
+
+        monkeypatch.setattr(token_manager, "_NOTIFIED", set())
+        sent = []
+
+        def fake_notify(msg):  # records at call time; create_task gets a no-op coroutine
+            sent.append(msg)
+            return asyncio.sleep(0)
+
+        monkeypatch.setattr("skopaq.notifications.notify", fake_notify)
+        mgr.set_token("expiring-soon", ttl_hours=1.5)
+        for _ in range(5):  # a new instance per call, like the MCP and chat tools
+            assert TokenManager().get_health().warning
+        assert len(sent) == 1
+        assert TokenManager().get_health(notify=False).warning  # returned, not sent
+        mgr.set_token("the-next-token", ttl_hours=1.5)  # a new token warns again
+        TokenManager().get_health()
+        assert len(sent) == 2
 
     def test_encryption_persists(self, mgr, tmp_token_dir):
         mgr.set_token("persistent-token")
