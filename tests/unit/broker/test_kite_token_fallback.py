@@ -34,6 +34,41 @@ def kite(monkeypatch, tmp_path):
     sys.modules.pop("skopaq.broker.kite_client", None)
 
 
+@pytest.fixture
+def import_kite(monkeypatch):
+    """Import kite_client afresh (it reads SKOPAQ_KITE_TOKEN_FILE at import), untouched."""
+    if importlib.util.find_spec("kiteconnect") is None:
+        fake = types.ModuleType("kiteconnect")
+        fake.KiteConnect = object
+        monkeypatch.setitem(sys.modules, "kiteconnect", fake)
+
+    def load():
+        sys.modules.pop("skopaq.broker.kite_client", None)
+        return importlib.import_module("skopaq.broker.kite_client")
+
+    yield load
+    sys.modules.pop("skopaq.broker.kite_client", None)
+
+
+def test_tests_never_see_the_host_kite_session(import_kite):
+    """A real Kite session on the host (the native MCP server writes
+    /tmp/skopaq_kite_token.json) must never reach a test: tests/conftest.py points the token
+    file at a directory that does not exist, so it is never read and never written."""
+    path = import_kite()._TOKEN_FILE
+    assert path == os.environ["SKOPAQ_KITE_TOKEN_FILE"]
+    assert not os.path.exists(os.path.dirname(path))
+    assert os.environ["SKOPAQ_KITE_API_KEY"] == ""  # no KiteClient from a real .env either
+
+
+def test_token_file_location(import_kite, monkeypatch, tmp_path):
+    monkeypatch.setenv("SKOPAQ_KITE_TOKEN_FILE", str(tmp_path / "kite.json"))
+    assert import_kite()._TOKEN_FILE == str(tmp_path / "kite.json")
+
+    monkeypatch.delenv("SKOPAQ_KITE_TOKEN_FILE")  # production: unchanged
+    data_dir = "/data" if os.path.isdir("/data") else "/tmp"
+    assert import_kite()._TOKEN_FILE == os.path.join(data_dir, "skopaq_kite_token.json")
+
+
 def _config(monkeypatch, api_base_url: str, api_token: str = "", public_base_url: str = "") -> None:
     cfg = SimpleNamespace(
         kite_access_token=SecretStr(""),

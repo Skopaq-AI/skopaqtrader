@@ -28,6 +28,8 @@ for _var in (
     "SKOPAQ_API_TOKEN",
     "SKOPAQ_INDSTOCKS_TOKEN",
     "SKOPAQ_KITE_ACCESS_TOKEN",
+    "SKOPAQ_KITE_API_KEY",
+    "SKOPAQ_KITE_API_SECRET",
 ):
     os.environ[_var] = ""
 
@@ -38,6 +40,12 @@ os.environ["SKOPAQ_HALT_FILE"] = os.path.join(
     os.path.dirname(__file__), ".no-such-dir", "HALT-for-tests"
 )
 os.environ.pop("SKOPAQ_TRADING_HALTED", None)
+# Likewise the Kite session file (/data or /tmp/skopaq_kite_token.json, which the native MCP
+# server writes on a Mac): a real token there would make tests call api.kite.trade. A test
+# that needs a token file sets kite_client._TOKEN_FILE to its own tmp path.
+os.environ["SKOPAQ_KITE_TOKEN_FILE"] = os.path.join(
+    os.path.dirname(__file__), ".no-such-dir", "kite-token-for-tests.json"
+)
 
 
 @pytest.fixture(autouse=True)

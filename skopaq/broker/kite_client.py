@@ -47,10 +47,12 @@ logger = logging.getLogger(__name__)
 _access_token: str = ""
 _access_token_set_at: Optional[datetime] = None
 
-# Persistent storage: /data on Fly.io (volume mount), /tmp locally
+# Persistent storage: /data on Fly.io (volume mount), /tmp locally;
+# SKOPAQ_KITE_TOKEN_FILE overrides it (tests/conftest.py points it at a path that cannot exist)
 import os as _os
 _DATA_DIR = "/data" if _os.path.isdir("/data") else "/tmp"
-_TOKEN_FILE = _os.path.join(_DATA_DIR, "skopaq_kite_token.json")
+_TOKEN_FILE = (_os.environ.get("SKOPAQ_KITE_TOKEN_FILE")
+               or _os.path.join(_DATA_DIR, "skopaq_kite_token.json"))
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
