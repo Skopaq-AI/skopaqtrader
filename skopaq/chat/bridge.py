@@ -16,14 +16,18 @@ import logging
 import time
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from skopaq.api.auth import require_api_token
 from skopaq.chat.session import ChatSession
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+# The endpoints run tools (including trade_stock): SKOPAQ_API_TOKEN, when set, guards them.
+router = APIRouter(
+    prefix="/api/chat", tags=["chat"], dependencies=[Depends(require_api_token)],
+)
 
 # In-memory session store (session_id → ChatSession)
 _sessions: dict[str, ChatSession] = {}
