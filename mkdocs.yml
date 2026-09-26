@@ -71,6 +71,7 @@ nav:
     - Multi-Agent Pipeline: architecture/pipeline.md
     - MCP Server: architecture/mcp-server.md
     - Kite Connect: architecture/kite-connect.md
+    - INDstocks API: indstocks_api.md
     - Ollama Local Models: architecture/ollama.md
     - Notifications: architecture/notifications.md
   - Deployment:

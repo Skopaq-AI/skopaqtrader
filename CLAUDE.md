@@ -27,7 +27,7 @@ CLI/API → SkopaqTradingGraph → [upstream LangGraph agents] → TradeSignal
 PRE_OPEN → SCANNING → ANALYZING → TRADING → MONITORING → CLOSING → REPORTING
 ```
 
-The daemon (`skopaq/execution/daemon.py`) is a finite state machine that composes all subsystems into a single unattended trading session. On an always-on host the scheduler (`skopaq/execution/scheduler.py`, `skopaq schedule`, the compose `scheduler` service) starts one session per NSE trading day at 09:15 IST, catches up until 11:30 if the host was down, stops a session still running at 15:45, and in live mode keeps a failed session's positions protected with `skopaq monitor`.
+The daemon (`skopaq/execution/daemon.py`) is a finite state machine that composes all subsystems into a single unattended trading session. On an always-on host the scheduler (`skopaq/execution/scheduler.py`, `skopaq schedule`, the compose `scheduler` service) starts one session per NSE trading day at 09:15 IST, catches up until 11:30 if the host was down, stops a session still running at 15:45, and in live mode keeps a failed session's positions protected with `skopaq monitor` (which exits 4 when it ends with positions still open or orders unconfirmed — after the close, or earlier on a stop — alerted as "check the broker").
 
 ## MCP Server (Claude Code Integration)
 
@@ -49,7 +49,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 40 
 | `scan_market` | Multi-model market scan for candidates |
 | `quick_decision` | Jev's calibrated answer to a question about a text (~0.1 s) |
 | `check_safety` | Pre-trade safety validation |
-| `place_order` | Execute order (paper/live, safety-checked) |
+| `place_order` | Execute order, safety-checked (the paper engine: the MCP server has no live INDstocks client) |
 | `halt_trading` / `resume_trading` | Kill switch: stop / allow new BUYs everywhere |
 | `performance_report` | Track record: AI calls vs NIFTY, closed trades, calibration |
 | `system_status` | Health check (version, mode, LLMs) |
@@ -59,7 +59,7 @@ SkopaqTrader exposes a **MCP server** (`skopaq/mcp_server.py`) that provides 40 
 ## Common Commands
 
 ```bash
-# Run unit tests (~900 tests, no API keys needed)
+# Run unit tests (~1,640 tests, no API keys needed)
 python3 -m pytest tests/unit/ -x -q
 
 # Run a specific test file
@@ -81,7 +81,7 @@ skopaq scan                # Scanner cycle
 skopaq chat                # Interactive AI chatbot (Claude Code-style)
 skopaq daemon --once --paper  # Full autonomous session
 skopaq schedule --check    # Show the scheduler's plan (the compose service runs `skopaq schedule`)
-skopaq monitor             # Monitor existing positions
+skopaq monitor             # Monitor existing positions; live: exits 4 if it ends with positions open or orders unconfirmed
 skopaq settle              # Settle past decisions whose holding window has traded
 skopaq memory legacy       # Show pre-v0.5.1 agent memories (--export FILE, --delete)
 skopaq report              # Track record: AI calls vs NIFTY, closed trades, calibration
@@ -123,6 +123,12 @@ skopaq serve               # FastAPI server
 - Historical endpoint: input timestamps in **milliseconds**, response `ts` in **seconds**
 - Candle objects: `{"ts":, "o":, "h":, "l":, "c":, "v":}`
 - Quote fields: `live_price`, `day_open`, `day_high`, `day_low`, `prev_close`
+- POST /order returns `data.order_id` and `data.order_status` (not `status`). Acceptance is not a fill: `skopaq/execution/live_orders.py` (`LiveOrderWorker`) confirms every live fill, cancels what an entry has not filled in time, and works protective exits until filled
+- Order rows (GET /order-book, GET /order): `id`, `txn_type`, `status`, `requested_qty`, `traded_qty`, `traded_price` (a string, `""` until filled), `security_id`, `product`, `extra_info`, `updated_at`. `name` is not the symbol and rows have no trading symbol (match on `security_id`). Parse rows and statuses with `skopaq.broker.order_status`; never compare raw status strings
+- GET /order and GET /order/trades take `{order_id, segment}` as a JSON body on a GET (the client also sends them as query params, and falls back to `/trades/{order_id}`)
+- Order and portfolio calls use the strict envelope (`_request_envelope`): a 2xx body with `status: error|failure` raises `BrokerError(kind="error_body")`, and `data: null` is empty only under `status: success`. `BrokerError.kind` says whether an order may exist; `OrderPlacementUncertain` means reconcile against the order book, never re-send
+- `/portfolio/positions` needs lowercase `segment` and `product` (the client queries cnc and intraday); holdings rows use `total_qty` / `avg_price`. Read the order book **before** positions and holdings (`read_broker_snapshot`)
+- MARKET orders become a LIMIT at the LTP and can rest; tick size comes from the instruments CSV (`resolve_tick_size`)
 - Always refer to `docs/indstocks_api.md` for endpoint reference — do not assume
 
 ## File Organization
@@ -134,7 +140,7 @@ skopaq/
 ├── broker/          # INDstocks REST/WS + Binance + paper engine
 ├── cli/             # Typer CLI (main.py = all commands, display.py = Rich output)
 ├── db/              # Supabase client + repositories
-├── execution/       # Executor, safety checker, order router, daemon, position monitor
+├── execution/       # Executor, safety checker, order router, live order worker, daemon, position monitor
 ├── graph/           # SkopaqTradingGraph (wraps upstream)
 ├── llm/             # Model tiering, env bridge, semantic cache (LangCache)
 ├── memory/          # BM25-indexed agent memory (Supabase-backed)
@@ -154,7 +160,7 @@ skopaq/
 
 ## Key Conventions
 
-1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order; the limits on new risk (size, value, lots, loss limits, cool-down) apply to BUYs only, since a SELL can only reduce what is held, and protective exits are MARKET orders, not LIMITs at the entry price (live fills are not yet confirmed from the broker's order book). Its daily/weekly/monthly loss limits are seeded from P&L stored in Supabase (`skopaq/execution/pnl_history.py`), so they hold across processes; the kill switch (`skopaq/execution/kill_switch.py`: `skopaq halt`, `SKOPAQ_TRADING_HALTED`, or the `system_flags` row) rejects every BUY while on.
+1. **Safety rules are immutable** — `SafetyRules` in `constants.py` cannot be overridden at runtime. The `SafetyChecker` enforces them before every order; the limits on new risk (size, value, lots, loss limits, cool-down) apply to BUYs only, since a SELL can only reduce what is held, and protective exits are MARKET orders, not LIMITs at the entry price (live, the worker re-places a resting exit as a tick-rounded LIMIT). The no-short-sale check subtracts open and just-filled SELL orders (and Skopaq's own unresolved SELLs the book does not list yet), reads the order book before positions and holdings, and refuses a live SELL when the order book cannot be read (override: `SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK`, default false, logged at CRITICAL on every use and alerted at most once per symbol every 10 minutes). The monitor's and CLOSING's exits are `TradingSignal(position_only=True)`: sized by the day's position less Skopaq's own pending/unshown/uncertain SELLs, never older holdings. Kite is data-only for this pipeline, but the MCP server's Kite order tools (`place_amo_order`, `place_gtt_order`, …) place real Zerodha orders whenever a Kite session exists, outside the SafetyChecker (`docs/trading/live-trading.md`, Residual limits). The checker's daily/weekly/monthly loss limits are seeded from P&L stored in Supabase (`skopaq/execution/pnl_history.py`), so they hold across processes; the kill switch (`skopaq/execution/kill_switch.py`: `skopaq halt`, `SKOPAQ_TRADING_HALTED`, or the `system_flags` row) rejects every BUY while on.
 2. **Paper mode is default** — All CLI commands default to paper trading. Live mode requires explicit `--live` or `SKOPAQ_TRADING_MODE=live` + confirmation prompt.
 3. **Upstream modifications are minimal** — Changes to `tradingagents/` must be documented in `UPSTREAM_CHANGES.md` with backward-compatibility notes.
 4. **No secrets in code** — All credentials come from environment variables. Never commit `.env`, token files, or API keys.

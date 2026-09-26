@@ -35,25 +35,37 @@ The scheduler (`skopaq schedule`, `skopaq/execution/scheduler.py`):
   lasts until 15:45, and alerts if not;
 - after a restart, alerts once about a session that was cut off (power cut, OOM kill,
   Docker Desktop crash or update). In live mode, before 15:45, it then runs
-  `skopaq monitor` until 15:45, so the open delivery (CNC) positions keep their
-  stop-loss and the 15:20 EOD exit instead of being carried overnight unmanaged. Paper
-  positions of that session are gone (the paper engine keeps them in memory). The same
-  recovery runs when the session exits non-zero on its own before 15:45 (the session
-  failed, or an OOM kill of the session alone); the daemon also runs its CLOSING phase
-  when it fails after opening trades;
+  `skopaq monitor`, so the open delivery (CNC) positions keep their stop-loss and the
+  15:20 EOD exit instead of being carried overnight unmanaged. Paper positions of that
+  session are gone (the paper engine keeps them in memory). The same recovery runs when
+  the session exits non-zero on its own before 15:45 (the session failed, or an OOM kill
+  of the session alone); the daemon also runs its CLOSING phase when it fails after
+  opening trades. The recovery monitor ends by itself once nothing is held or open, or
+  shortly after the close (15:31), rather than running to 15:45 (while anything is still
+  held it keeps running): rc 0 when flat, rc 4 when positions remain open, an exit failed
+  or an order is unconfirmed, which is alerted as "check the broker" (ending with rc 4
+  before 15:30, while it can still sell, it is run again at the next poll, or 5 minutes
+  later if it ended within a minute of starting; its own `positions-left` alert goes out
+  once a day for the same state);
 - tracks that recovery monitor across restarts too. Unlike the daemon, `skopaq monitor`
   does not sell when it is stopped before the 15:20 EOD exit, so a restart or
   `docker compose up -d` during it leaves positions unmanaged: you get an alert, and a
   scheduler that is back before 15:45 alerts again and runs the monitor again (the same
   after a power cut during it, or when it had to be killed). Stopped from 15:20 on, it
-  sells what is left as it exits, so it counts as done. Found after 15:45 or on a later
-  day, it alerts to check open positions at the broker. A monitor that cannot be started
-  (e.g. out of memory) is alerted once and retried every poll until 15:45;
-- sends SIGTERM to a session still running at **15:45** (the daemon then closes its
-  positions) and SIGKILL 5 minutes later. A session that has to be SIGKILLed may not
+  sells what is left as it exits, so it counts as done, unless it exits 4 (shares still
+  held or an order unconfirmed): that is alerted, and a scheduler back before 15:45 runs
+  it again (until 15:30 it can still sell). Found after 15:45 or on a later day, it
+  alerts to check open positions at the broker. A monitor that cannot be started (e.g.
+  out of memory) is alerted once and retried every poll until 15:45;
+- sends SIGTERM to a session still running at **15:45** and SIGKILL 5 minutes later. In
+  paper mode the daemon then closes its positions; in live mode nothing can be sold by
+  then (no order is placed after 15:29:55 IST), so it only reports what is left in a
+  CRITICAL `positions-left` alert: check the broker. A session that has to be SIGKILLed may not
   have finished CLOSING: the alert says to check the broker, and in live mode a kill after a
   scheduler stop (not the deadline) counts as an interrupted session, so the restarted
-  scheduler runs `skopaq monitor` until 15:45;
+  scheduler runs `skopaq monitor`. Live order work itself stops within the kill-after
+  minus `SKOPAQ_ORDER_SHUTDOWN_MARGIN_SECONDS` (300 − 60 = 240 s) after the SIGTERM, so a
+  session that is not stuck in an analysis ends before the SIGKILL;
 - runs only once per state directory: it holds a lock on `scheduler/scheduler.lock` for
   as long as it runs. A second scheduler on the same volume (`docker compose run
   scheduler`, or `skopaq schedule` without `--check` inside the container) exits 1
@@ -78,7 +90,8 @@ true/false (or yes/no, on/off, 1/0) counts as not confirmed: live sessions are s
 and alerted, naming the value.
 
 The position monitor is not scheduled separately: it runs inside each daemon session
-(MONITORING phase) and exits at 15:20 IST.
+(MONITORING phase). It sells from 15:20 IST and ends once flat; in live mode at the latest
+at 15:31, and the session then sends a CRITICAL alert if positions remain.
 
 State lives in two named volumes, shared by every container:
 
@@ -86,6 +99,8 @@ State lives in two named volumes, shared by every container:
 |--------|-----------------------|-------|
 | `skopaq-home` | `/home/skopaq/.skopaq/token.enc`, `token.key` | INDstocks token (encrypted) and its key |
 | `skopaq-home` | `/home/skopaq/.skopaq/HALT` | kill-switch file |
+| `skopaq-home` | `/home/skopaq/.skopaq/locks/` | per-symbol SELL locks (`sell-<SYMBOL>.lock`): one SELL of a symbol at a time across containers; per-order locks (`order-<ID>.lock`): one process at a time resumes an order and records its late fill |
+| `skopaq-home` | `/home/skopaq/.skopaq/orders/` | order journal (`YYYY-MM-DD.jsonl`): Skopaq's own live orders, so a later process resumes the ones left open |
 | `skopaq-home` | `/home/skopaq/.tradingagents/` | decision log (settled by `skopaq settle`) |
 | `skopaq-home` | `/home/skopaq/results/`, `/home/skopaq/.cache/` | analysis reports, data cache |
 | `skopaq-home` | `/home/skopaq/scheduler/` | scheduler markers (`daemon-YYYY-MM-DD.started`, `.rc`, `monitor-…` for the recovery monitor) and `scheduler.lock` |
@@ -232,10 +247,11 @@ git pull && docker compose build && docker compose up -d
 ```
 
 Only outside 09:15–15:45 IST on trading days. Recreating the scheduler during a session
-sends it SIGTERM, and the daemon's CLOSING phase sells every open position (a session
-still running 5 minutes later is killed; in live mode the new scheduler then runs
-`skopaq monitor` until 15:45). During a recovery `skopaq monitor` a recreate leaves the
-positions unmanaged until the new scheduler starts it again.
+sends it SIGTERM, and the daemon's CLOSING phase sells every open position; live order work
+stops within the kill-after minus 60 s (240 s) of the SIGTERM (a session still running
+5 minutes later is killed; in live mode the new scheduler then runs `skopaq monitor`).
+During a recovery `skopaq monitor` a recreate leaves the positions unmanaged until the new
+scheduler starts it again.
 
 ## 10. Holidays
 
@@ -313,7 +329,19 @@ needs none of this.
 }
 ```
 
-Each has its own paper-engine state; the kill switch is shared through Supabase.
+Each has its own paper-engine state; the kill switch is shared through Supabase. Neither
+MCP server (native or container) has a live INDstocks client: its `place_order` goes to
+the paper engine, so it takes no SELL lock and reads no INDstocks order book.
+
+**Kite orders are real.** Once a Kite session exists (the container reads it from `/data`;
+the native server fetches it through `SKOPAQ_API_BASE_URL`, above), the MCP tools
+`place_amo_order`, `place_bracket`, `place_cover`, `place_basket`, `buy_option_contract`,
+`trade_future`, `invest_mutual_fund`, `place_gtt_order` and `setup_swing_trade` place real
+orders on that Zerodha account, whatever `SKOPAQ_TRADING_MODE` says, outside the
+`SafetyChecker`, the kill switch, the no-short-sale check and the SELL locks. The repo's
+`.claude/settings.json` does not auto-allow them (Claude Code asks first); leave Kite
+unconnected on this host if they should not trade. See
+[Live Trading](../trading/live-trading.md#residual-limits).
 
 ## 14. Backups
 
@@ -338,13 +366,25 @@ run `docker system prune -f && docker builder prune -f` monthly.
 | A value with `$` is cut short | Write `$$` in `.env` (compose interpolates `$`) |
 | No session on a weekday | `schedule --check`: holiday, missing holiday list, live not confirmed, or `SKOPAQ_SCHEDULER_ENABLED=false` |
 | Alert "PRE_OPEN failed" or "pre-flight" | Usually the INDstocks token: set it; the session is retried every 5 min until 11:30 |
-| Alert "session ... was interrupted" | The Mac or Docker died mid-session. Check open positions at the broker (in live mode the scheduler runs `skopaq monitor` until 15:45) |
-| Alert "daemon exited rc=N" | The session itself failed or was killed (a failed candidate analysis alone exits 0): read `logs/daemon/daemon-<date>.log`. In live mode before 15:45 the scheduler runs `skopaq monitor` until 15:45; otherwise check open positions at the broker |
+| Alert "session ... was interrupted" | The Mac or Docker died mid-session. Check open positions at the broker (in live mode the scheduler runs `skopaq monitor`) |
+| Alert "daemon exited rc=N" | The session itself failed or was killed (a failed candidate analysis alone exits 0): read `logs/daemon/daemon-<date>.log`. In live mode before 15:45 the scheduler runs `skopaq monitor`; otherwise check open positions at the broker |
 | Alert "did not stop within 300s ... was killed" | The session ignored SIGTERM (e.g. mid-analysis), so CLOSING may not have finished. Check open positions at the broker; in live mode a scheduler back before 15:45 runs `skopaq monitor` |
 | Alert "recovery `skopaq monitor` ... was stopped" or "... was cut off" | The scheduler stopped or died during the recovery monitor. Before 15:45 the restarted scheduler runs it again; otherwise check open positions at the broker |
 | Alert "could not run the recovery `skopaq monitor`" | Launching it failed (out of memory, process limit). Check open positions at the broker; the scheduler retries every poll until 15:45 without further alerts |
+| Alert "recovery `skopaq monitor` ... rc=4" ("positions still open, failed exits or unconfirmed orders") | The monitor ended with shares still held, an exit that did not fill or an order it could not confirm. Check positions and the order book at the broker now: delivery positions are carried overnight |
+| ORDER ALERT `sell-refused:<symbol>:open-sell`, `exit-blocked:<symbol>:foreign-open-sell` or `exit-blocked:<symbol>:closing-skip` naming an order | An open SELL order at the broker already covers the shares; the alert names it and its status. Cancel it at the broker if it is not yours to keep; the monitor takes the shares back into its care once it is gone |
+| ORDER ALERT `sell-refused:<symbol>:open-sell` or `exit-blocked:<symbol>:closing-skip` mentioning "a SELL whose placement is uncertain" or "not listed in the order book yet" | A Skopaq SELL whose placement answer was lost, or a Skopaq SELL order the order book does not list yet (stuck or still being worked), may be selling the shares. Check the order book for it; it counts against the shares for `SKOPAQ_ORDER_SELL_FILL_LAG_WINDOW_SECONDS` (10 min) or until it is final, then SELLs are allowed again |
+| ORDER ALERT `sell-refused:<symbol>:…` saying "older delivery holdings are not sold by an exit" | A protective exit (monitor, CLOSING) found the day's position already covered by Skopaq's own open, unconfirmed or just-filled SELLs; your older holdings of the stock are never sold to make up the difference. Nothing to do unless the named orders should not be working |
+| ORDER ALERT `exit-blocked:<symbol>:unshown-buy` | A BUY the broker confirmed does not show in positions yet, so it cannot be sold. Check the positions at the broker; the monitor keeps watching for it until 15:31 |
+| ORDER ALERT `sell-refused:<symbol>:book-unreadable` or `…:holdings-unreadable` | INDstocks' order book (or holdings) could not be read (token, outage), so the SELL was refused rather than risk selling twice (or selling what is not held). Check the token and the INDstocks status; the monitor retries. `SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK=true` overrides the order-book case (not recommended) |
+| ORDER ALERT `order-stuck`, `order-deadline`, `order-interrupted` or `placement-uncertain` | An order may still be working at the broker (a cancel was not confirmed, or a placement answer was lost). Check the order book for the named order and cancel it there if it should not be working; the monitor also resumes it |
+| ORDER ALERT `placement-match` | An order that only looks like a lost Skopaq placement appeared (same stock, side and quantity, created about then). Skopaq watches it and books its fills but never cancels it: check at the broker whether it is Skopaq's, and cancel it there if it should not stay |
+| ORDER ALERT `booking-unconfirmed` | A late fill's trade rows may not have been written: the write failed, or the process writing them died. Skopaq counts only confirmed bookings, so the next booking of that order starts from the last confirmed total — if the rows had in fact been written, the named shares are booked twice. Check the trade rows for the named order against the broker's trade book |
+| ORDER ALERT `late-fill-unclaimed` | A late fill was not booked because the order journal directory cannot be written (full disk, permissions). Book the named shares by hand, then fix the `skopaq-home` volume |
+| ORDER ALERT `exit-not-filled`, `exit-partial`, `exit-rejected` or `exit-replace-blocked` | A protective exit did not sell everything after its attempts (or its remainder could not be re-placed: open SELLs, unshown fills, or an unreadable book or holdings). The monitor tries again next cycle until 15:29:55 IST; shares still held after the close are carried overnight (a `positions-left` alert follows): check the broker |
 | Alert "another scheduler is already running" | A second scheduler was started on the same volume (`docker compose run scheduler`, or `skopaq schedule` without `--check`). It exited; the running one carries on (sent once a day) |
 | Alert "not running: Invalid scheduler configuration" | Fix the named `SKOPAQ_SCHEDULER_*` value in `.env`, then `docker compose up -d scheduler`. `api` and `telegram` are not affected |
+| Log "SKOPAQ_ORDER_... is not a valid value; using the default" (or `SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK`, `SKOPAQ_INDSTOCKS_ORDER_REMARKS_ENABLED`, `SKOPAQ_MONITOR_RESYNC_CYCLES`) | A live order setting in `.env` does not parse (e.g. `30s`). Every service keeps running with that setting's default (the two switches off); fix the value and `docker compose up -d` |
 | Alert "the session log failed" | Usually a full disk: free space (Docker Desktop's disk image, `docker system prune`). The session keeps running; its output is in `docker compose logs scheduler` |
 | Native MCP quotes come from INDstocks, not Kite | Section 13: `SKOPAQ_API_BASE_URL` in the MCP server's `env` block |
 
