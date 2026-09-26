@@ -26,6 +26,18 @@ All configuration is via environment variables with the `SKOPAQ_` prefix, loaded
 | `SKOPAQ_KITE_API_SECRET` | Kite API secret |
 | `SKOPAQ_INDSTOCKS_TOKEN` | INDstocks API token (alternative broker) |
 
+## Live Orders (INDstocks)
+
+Live mode only. A live trade counts only when INDstocks confirms the fill; these settle how
+long Skopaq waits, how hard it works a protective exit and how SELLs are checked against
+open orders. The full list is in [Live Trading](../trading/live-trading.md#live-order-configuration).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKOPAQ_ORDER_FILL_TIMEOUT_SECONDS` | `30` | Entries: cancel whatever has not filled after this long |
+| `SKOPAQ_ORDER_EXIT_MAX_ATTEMPTS` | `3` | Protective exits: cancel and re-place a resting exit, this many attempts at most |
+| `SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK` | `false` | **Danger:** SELL even when the order book cannot be read |
+
 ## Risk Management
 
 | Variable | Default | Description |
@@ -45,6 +57,7 @@ All configuration is via environment variables with the `SKOPAQ_` prefix, loaded
 | `SKOPAQ_MONITOR_EOD_EXIT_MINUTES_BEFORE_CLOSE` | `10` | EOD exit at 15:20 |
 | `SKOPAQ_MONITOR_TRAILING_STOP_ENABLED` | `false` | Enable trailing stop |
 | `SKOPAQ_MONITOR_TRAILING_STOP_PCT` | `0.02` | 2% trail distance |
+| `SKOPAQ_MONITOR_RESYNC_CYCLES` | `3` | Live: re-read the broker's order book and positions every N polls |
 
 ## Daemon (Autonomous)
 

@@ -32,7 +32,8 @@ await notify("Order filled: BUY 10x RELIANCE @ Rs 2,485")
 
 | Function | Purpose | Key Args |
 |----------|---------|----------|
-| `notify_trade_event()` | Order fill/rejection | `side`, `symbol`, `price`, `quantity`, `status` |
+| `notify_trade_event()` | Order fill/rejection | `side`, `symbol`, `price`, `quantity`, `status`, `reason` |
+| `notify_order_alert()` | CRITICAL/WARNING alert about a live order | `severity`, `title`, `text`, `order_ids` |
 | `notify_gtt_event()` | GTT placed/triggered/cancelled | `event`, `symbol`, `trigger_price`, `trigger_id` |
 | `notify_position_alert()` | Position monitoring alerts | `symbol`, `ltp`, `entry`, `pnl`, `alert_type` |
 | `notify_market_scan()` | Scanner results | `results` (list of quote dicts) |
@@ -46,8 +47,24 @@ await notify("Order filled: BUY 10x RELIANCE @ Rs 2,485")
 | Event | When | Example Message |
 |-------|------|-----------------|
 | Order filled | After successful execution | "BUY 10x RELIANCE @ Rs 2,485 -- FILLED" |
+| Order partly filled | Live: the broker filled part of the order, the rest was cancelled | "BUY RELIANCE -- PARTIAL, Qty: 3 ... filled 3 of 5; rest cancelled" |
+| Order unconfirmed | Live: the order may still be working at the broker | "SELL TCS -- UNCONFIRMED" and why |
 | Order rejected | Safety check or broker rejection | "REJECTED: exceeds max position size" |
 | Paper trade | Paper mode execution | "PAPER BUY 10x TCS @ Rs 3,800" |
+
+### Order Alerts (live)
+
+Sent by `OrderAlerter` (`skopaq/execution/order_alerts.py`) in the background, so placing or
+cancelling an order never waits for Telegram, and deduplicated by key within the process (a
+blocked exit retried every 10 seconds sends one message). An alert about particular orders
+ends with their broker order ids ("Orders: EQ-…").
+
+| Severity | Examples |
+|----------|----------|
+| CRITICAL | `exit-not-filled`, `exit-partial`, `exit-rejected`, `exit-replace-blocked`, `sell-refused` (a protective exit, or the order book or holdings unreadable), `exit-blocked`, `order-stuck`, `order-deadline`, `order-interrupted`, `placement-uncertain`, `placement-match` (an order that only looks like a lost placement: watched, never cancelled), `fill-qty-unknown` (an exit), `sell-without-book` (at most once per symbol every 10 minutes), `exit-late-unpriced`, `late-fill-unpriced`, `late-fill`/`exit-late` of an order only matched by its look, `booking-unconfirmed` (a late fill's booking failed or never finished: its shares may not be booked — check trade rows), `late-fill-unclaimed` (a final late fill not booked: the journal directory is unwritable — book it by hand), `positions-left` (`skopaq monitor`: once a day for the same state) |
+| WARNING | `sell-refused` (any other SELL), `entry-partial`, `fill-qty-unknown` (an entry), `fill-price-unknown`, `late-fill`, `exit-late`, `position-dropped`, `partial-not-split`, `sell-not-booked`, `sell-lock-unavailable`, `journal-write-failed` |
+
+What each means and what to do: [Live Trading](../trading/live-trading.md#fill-confirmation-live) and the troubleshooting table in [Mac mini (Docker)](../deployment/mac-mini.md#15-troubleshooting).
 
 ### GTT Events
 

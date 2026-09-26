@@ -86,7 +86,7 @@ only; expose it publicly only through a Cloudflare Tunnel with Access.
 
 | Volume | Path | Holds |
 |--------|------|-------|
-| `skopaq-home` | `/home/skopaq/.skopaq/` | INDstocks token (`token.enc`, `token.key`), kill-switch `HALT` file |
+| `skopaq-home` | `/home/skopaq/.skopaq/` | INDstocks token (`token.enc`, `token.key`), kill-switch `HALT` file, per-symbol SELL locks (`locks/`), live order journal (`orders/`) |
 | `skopaq-home` | `/home/skopaq/.tradingagents/` | decision log |
 | `skopaq-home` | `/home/skopaq/results/`, `.cache/` | analysis reports, data cache |
 | `skopaq-home` | `/home/skopaq/scheduler/`, `logs/daemon/` | scheduler markers, one log per session |
