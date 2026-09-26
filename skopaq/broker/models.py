@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 # ── Enums ───────────────────────────────────────────────────────────────────
@@ -66,6 +66,12 @@ class Validity(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    """Not INDstocks' vocabulary; used only by the unused websocket feed.
+
+    Parse broker statuses with ``skopaq.broker.order_status`` (``normalise_status``,
+    ``parse_order_row``), never by comparing against these values.
+    """
+
     PENDING = "PENDING"
     OPEN = "OPEN"
     COMPLETE = "COMPLETE"
@@ -129,6 +135,23 @@ class CancelOrderRequest(BaseModel):
 # ── Response Models ─────────────────────────────────────────────────────────
 
 
+def _blank_to_zero(value: object) -> object:
+    """None, ``""`` and ``"null"`` become 0: INDstocks sends null for numbers that
+    do not apply (e.g. ``day_buy_val`` on carried-forward rows)."""
+    if value is None:
+        return 0
+    if isinstance(value, str) and value.strip().lower() in ("", "null"):
+        return 0
+    return value
+
+
+def _id_to_str(value: object) -> object:
+    """Accept a numeric ``security_id`` (``2885``) as the string ``"2885"``."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return "" if value is None else value
+
+
 class OrderResponse(BaseModel):
     """Response from INDstocks after placing/modifying/cancelling an order."""
 
@@ -148,10 +171,13 @@ class Position(BaseModel):
     ``extra = "allow"`` keeps any additional fields the API may add.
     """
 
-    symbol: str = ""
+    symbol: str = Field("", validation_alias=AliasChoices("symbol", "trading_symbol"))
     exchange: str = ""
+    # The client overwrites this with the product it queried (row values are unreliable)
     product: str = ""
-    quantity: Decimal = Field(Decimal("0"), validation_alias="net_qty")
+    quantity: Decimal = Field(
+        Decimal("0"), validation_alias=AliasChoices("net_qty", "net_quantity"),
+    )
     average_price: float = Field(0.0, validation_alias="avg_price")
     last_price: float = 0.0
     pnl: float = Field(0.0, validation_alias="realized_profit")
@@ -160,24 +186,68 @@ class Position(BaseModel):
     sell_quantity: Decimal = Field(Decimal("0"), validation_alias="sell_qty")
     buy_value: float = Field(0.0, validation_alias="day_buy_val")
     sell_value: float = Field(0.0, validation_alias="day_sell_val")
+    day_sell_quantity: Decimal = Field(
+        Decimal("0"), validation_alias=AliasChoices("day_sell_qty", "day_sell_quantity"),
+    )
     security_id: str = ""
+    # The same shares have a different security id on each exchange; the ISIN is shared
+    isin: str = ""
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
+    @field_validator(
+        "quantity", "average_price", "last_price", "pnl", "day_pnl", "buy_quantity",
+        "sell_quantity", "buy_value", "sell_value", "day_sell_quantity", mode="before",
+    )
+    @classmethod
+    def _blank_numbers(cls, value: object) -> object:
+        return _blank_to_zero(value)
+
+    @field_validator("security_id", "exchange", "isin", mode="before")
+    @classmethod
+    def _security_id_text(cls, value: object) -> object:
+        return _id_to_str(value)
+
 
 class Holding(BaseModel):
-    """Delivery holding from ``GET /portfolio/holdings``."""
+    """Delivery holding from ``GET /portfolio/holdings``.
 
-    symbol: str = ""
+    INDstocks rows carry ``symbol``, ``security_id``, ``total_qty`` (T1 + DP),
+    ``used_qty`` ("pledged, sold, or otherwise blocked") and ``avg_price``; there is no
+    product, LTP or P&L. ``used_quantity`` is kept but not subtracted: it may include
+    shares sold today, which the negative net position already subtracts.
+    """
+
+    symbol: str = Field("", validation_alias=AliasChoices("symbol", "trading_symbol"))
+    security_id: str = ""
     exchange: str = ""
-    quantity: Decimal = Decimal("0")
-    average_price: float = 0.0
+    isin: str = ""
+    quantity: Decimal = Field(Decimal("0"), validation_alias=AliasChoices("quantity", "total_qty"))
+    average_price: float = Field(
+        0.0, validation_alias=AliasChoices("average_price", "avg_price"),
+    )
+    used_quantity: Decimal = Field(
+        Decimal("0"), validation_alias=AliasChoices("used_quantity", "used_qty"),
+    )
     last_price: float = 0.0
     pnl: float = 0.0
     day_change: float = 0.0
     day_change_pct: float = 0.0
 
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    @field_validator(
+        "quantity", "average_price", "used_quantity", "last_price", "pnl", "day_change",
+        "day_change_pct", mode="before",
+    )
+    @classmethod
+    def _blank_numbers(cls, value: object) -> object:
+        return _blank_to_zero(value)
+
+    @field_validator("security_id", "exchange", "isin", mode="before")
+    @classmethod
+    def _security_id_text(cls, value: object) -> object:
+        return _id_to_str(value)
 
 
 class Quote(BaseModel):
@@ -308,6 +378,12 @@ class TradingSignal(BaseModel):
     quantity: Optional[Decimal] = None
     reasoning: str = ""
     agent_state: dict = Field(default_factory=dict)
+    # Live: a protective exit of the day's position (the monitor, CLOSING). The Executor
+    # re-checks it under the SELL lock against what that position still holds after
+    # Skopaq's own open, unconfirmed and not-yet-shown SELLs, so it never sells older
+    # delivery holdings. An analysis SELL leaves it False (it may sell holdings). Paper
+    # ignores it.
+    position_only: bool = False
 
 
 class ExecutionResult(BaseModel):
@@ -323,3 +399,61 @@ class ExecutionResult(BaseModel):
     slippage: float = 0.0
     brokerage: float = 5.0  # INR flat per order
     timestamp: datetime = Field(default_factory=datetime.now)
+
+    # Live only (paper keeps the defaults; consumers then use the ordered quantity).
+    # Read them through the helpers below, which tolerate mock results.
+    filled_quantity: Optional[Decimal] = None   # broker-confirmed total across the result's orders
+    requested_quantity: Optional[Decimal] = None
+    # filled | partial | rejected | cancelled | open | unknown | not_placed | late_fill
+    outcome: str = ""
+    order_ids: list[str] = Field(default_factory=list)   # every broker order placed, in order
+    remaining_open: bool = False    # an order may still be working at the broker
+    fill_unconfirmed: bool = False  # a final order whose filled quantity the broker did not report
+    fill_price_source: str = ""     # trades | order | trade_book | estimate
+    broker_message: str = ""        # last extra_info / broker or cancel message
+
+
+# Readers for ExecutionResult's live fields. Tests pass MagicMock results whose
+# attributes are truthy mocks, so every consumer reads through these.
+
+
+def filled_quantity_of(result: object, default: Decimal | int) -> Decimal:
+    """The broker-confirmed filled quantity, else ``default`` (paper, mocks, unknown)."""
+    value = getattr(result, "filled_quantity", None)
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return Decimal(value)
+    return default if isinstance(default, Decimal) else Decimal(default)
+
+
+def is_remaining_open(result: object) -> bool:
+    """True only when the result says an order may still be working at the broker."""
+    return getattr(result, "remaining_open", False) is True
+
+
+def is_unconfirmed(result: object) -> bool:
+    """An order may still be working, or a final order's fill was not reported."""
+    return is_remaining_open(result) or getattr(result, "fill_unconfirmed", False) is True
+
+
+def outcome_of(result: object) -> str:
+    """The live outcome string, or ``""``."""
+    value = getattr(result, "outcome", "")
+    return value if isinstance(value, str) else ""
+
+
+def order_ids_of(result: object) -> list[str]:
+    """The broker order ids, or ``[]``."""
+    value = getattr(result, "order_ids", None)
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return list(value)
+    return []
+
+
+def fill_status_of(result: object) -> str:
+    """FILLED, PARTIAL (a live order filled in part), UNCONFIRMED (a live order may still
+    be working, or its fill was not reported) or FAILED. Paper: FILLED or FAILED."""
+    if getattr(result, "success", False):
+        return "FILLED" if outcome_of(result) in ("", "filled") else "PARTIAL"
+    return "UNCONFIRMED" if is_unconfirmed(result) else "FAILED"

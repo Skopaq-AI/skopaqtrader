@@ -12,6 +12,13 @@ Key differences from typical broker APIs:
     - Historical candles are objects: ``{"ts": epoch_sec, "o":, "h":, ...}``
     - Quote response fields: ``live_price``, ``day_open``, ``day_high``,
       ``day_low``, ``prev_close``, ``day_change``, ``day_change_percentage``
+    - Order and portfolio calls use the strict envelope (``_request_envelope``):
+      a 2xx ``{"status": "error"|"failure"}`` body raises, and ``data: null`` is
+      empty only under ``status: success``. Market data keeps the lenient parser
+      (historical data uses ``{"success": true, "data": ...}``).
+    - POST /order answers ``data.order_id`` and ``data.order_status`` (not
+      ``status``). Acceptance is not a fill: statuses and rows are parsed by
+      ``skopaq.broker.order_status``.
 """
 
 from __future__ import annotations
@@ -37,7 +44,8 @@ from skopaq.broker.models import (
     Segment,
     UserProfile,
 )
-from skopaq.broker.rate_limiter import RateLimiter
+from skopaq.broker.order_status import normalise_status
+from skopaq.broker.rate_limiter import RateLimiter, SlidingWindowLimiter
 from skopaq.broker.token_manager import TokenExpiredError, TokenManager
 from skopaq.config import SkopaqConfig
 
@@ -46,15 +54,108 @@ logger = logging.getLogger(__name__)
 # Separate limiters matching INDstocks rate limits
 _api_limiter = RateLimiter(max_calls=100, period=1.0)
 _order_limiter = RateLimiter(max_calls=10, period=1.0)
+# Non-Trading APIs (order history, trades, portfolio, funds, profile) allow 15 requests a
+# second: each client stays at 12 in any rolling second, so a burst of live SELLs (each
+# reads the book, positions, holdings and funds before it is placed) is not refused
+_NON_TRADING_PER_S = 12
+_NON_TRADING_PATHS = frozenset({"/order-book", "/order", "/order/trades", "/trade-book",
+                                "/funds", "/user/profile"})
+_NON_TRADING_PREFIXES = ("/trades/", "/portfolio/")
+
+
+def _is_non_trading(method: str, path: str) -> bool:
+    return method == "GET" and (path in _NON_TRADING_PATHS
+                                or path.startswith(_NON_TRADING_PREFIXES))
 
 
 class BrokerError(Exception):
-    """Raised when a broker API call fails."""
+    """Raised when a broker API call fails.
 
-    def __init__(self, message: str, status_code: int = 0, body: str = "") -> None:
+    ``kind`` says how far the request got:
+
+    - ``not_sent``: it never reached the broker (client not open, expired token,
+      connection refused or timed out while connecting). An order was NOT placed.
+    - ``transport``: it may have reached the broker (read/write error or timeout
+      after sending, the server dropping the connection).
+    - ``http``: the broker answered with HTTP >= 400 (``status_code``).
+    - ``bad_payload``: a 2xx answer that is not JSON or not the expected shape.
+    - ``error_body``: a 2xx answer whose body reports a failure.
+    """
+
+    def __init__(
+        self, message: str, status_code: int = 0, body: str = "", kind: str = "",
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.kind = kind
+
+
+class OrderPlacementUncertain(BrokerError):
+    """POST /order outcome unknown — the order may exist.
+
+    Reconcile against the order book before retrying; never re-send blind.
+    """
+
+
+# httpx errors raised before the request left this host: nothing reached the broker.
+_NOT_SENT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ProxyError,
+    httpx.UnsupportedProtocol,
+    httpx.LocalProtocolError,
+)
+
+
+def _error_text(payload: object) -> str:
+    """The broker's own words from an error body: ``message``, ``error.msg``, ``error``."""
+    if not isinstance(payload, dict):
+        return ""
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    error = payload.get("error")
+    if isinstance(error, dict):
+        for key in ("msg", "message", "description"):
+            if isinstance(error.get(key), str) and error[key].strip():
+                return error[key].strip()
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    for key in ("error_type", "error_code"):
+        if payload.get(key) not in (None, ""):
+            return str(payload[key])
+    return ""
+
+
+def _is_error_body(payload: dict) -> bool:
+    """A body that reports a failure, whatever its HTTP status.
+
+    ``status`` error/failure, ``success: false``, or a non-empty ``error`` /
+    ``error_type`` / ``error_code`` (a null, false, 0 or empty value is no error).
+    """
+    status = payload.get("status")
+    if isinstance(status, str) and status.strip().lower() in ("error", "failure"):
+        return True
+    if payload.get("success") is False:
+        return True
+    for key in ("error", "error_type", "error_code"):
+        value = payload.get(key)
+        if value.strip() if isinstance(value, str) else value:
+            return True
+    return False
+
+
+def _order_status_of(data: object) -> str:
+    """The order status in a place/modify/cancel answer (``order_status``, else ``status``)."""
+    if not isinstance(data, dict):
+        return ""
+    return normalise_status(data.get("order_status")) or normalise_status(data.get("status"))
+
+
+def _dict_rows(rows: list) -> list[dict[str, Any]]:
+    return [row for row in rows if isinstance(row, dict)]
 
 
 class INDstocksClient:
@@ -72,17 +173,28 @@ class INDstocksClient:
         token_manager: TokenManager,
         *,
         timeout: float = 30.0,
+        transport: Optional[httpx.AsyncBaseTransport] = None,
     ) -> None:
         self._base_url = config.indstocks_base_url.rstrip("/")
         self._token_manager = token_manager
         self._timeout = timeout
+        self._transport = transport   # tests pass httpx.MockTransport
         self._client: Optional[httpx.AsyncClient] = None
+        # `remarks` on POST /order is listed as unreleased in the docs: off unless enabled
+        self._remarks_enabled = (
+            getattr(config, "indstocks_order_remarks_enabled", False) is True
+        )
+        # Which per-order trades path works: "order" (/order/trades) or "legacy"
+        # (/trades/{id}); set only after a path returned at least one fill.
+        self._trades_path: Optional[str] = None
+        self._read_limiter = SlidingWindowLimiter(_NON_TRADING_PER_S, 1.0)
 
     async def __aenter__(self) -> INDstocksClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=self._timeout,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            transport=self._transport,
         )
         return self
 
@@ -101,11 +213,75 @@ class INDstocksClient:
         try:
             token = self._token_manager.get_token()
         except TokenExpiredError as exc:
-            raise BrokerError(str(exc)) from exc
+            raise BrokerError(str(exc), kind="not_sent") from exc
         return {
             "Authorization": token,
             "Content-Type": "application/json",
         }
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        json_body: Optional[dict[str, Any]] = None,
+        is_order: bool = False,
+    ) -> httpx.Response:
+        """Send one request (rate limited) and return the 2xx response.
+
+        Raises ``BrokerError`` with a ``kind`` saying whether the request could have
+        reached the broker (see ``BrokerError``), or ``kind="http"`` for HTTP >= 400.
+        """
+        if self._client is None:
+            raise BrokerError(
+                "Client not initialised. Use `async with` context manager.", kind="not_sent",
+            )
+
+        if is_order:
+            await _order_limiter.acquire()
+        elif _is_non_trading(method, path):
+            await self._read_limiter.acquire()
+        else:
+            await _api_limiter.acquire()
+
+        try:
+            resp = await self._client.request(
+                method,
+                path,
+                headers=self._headers(),
+                params=params,
+                json=json_body,
+            )
+        except _NOT_SENT_ERRORS as exc:
+            raise BrokerError(f"HTTP error (not sent): {exc!r}", kind="not_sent") from exc
+        except httpx.HTTPError as exc:
+            raise BrokerError(f"HTTP error: {exc!r}", kind="transport") from exc
+
+        if resp.status_code >= 400:
+            try:
+                detail = _error_text(resp.json()) or resp.text
+            except ValueError:
+                detail = resp.text
+            raise BrokerError(
+                f"API error {resp.status_code}: {detail}",
+                status_code=resp.status_code,
+                body=resp.text,
+                kind="http",
+            )
+        return resp
+
+    @staticmethod
+    def _json(resp: httpx.Response, path: str) -> Any:
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise BrokerError(
+                f"{path}: response is not JSON: {resp.text[:200]!r}",
+                status_code=resp.status_code,
+                body=resp.text,
+                kind="bad_payload",
+            ) from exc
 
     async def _request(
         self,
@@ -116,41 +292,89 @@ class INDstocksClient:
         json_body: Optional[dict[str, Any]] = None,
         is_order: bool = False,
     ) -> Any:
-        """Send an API request with rate limiting and error handling.
+        """Send an API request and return its data, leniently (market data).
 
         Returns the parsed JSON response. If the response has a
-        ``{"data": ...}`` wrapper, returns the inner ``data`` value.
+        ``{"data": ...}`` wrapper, returns the inner ``data`` value. Order and
+        portfolio calls use ``_request_envelope`` instead.
         """
-        if self._client is None:
-            raise BrokerError("Client not initialised. Use `async with` context manager.")
+        resp = await self._send(
+            method, path, params=params, json_body=json_body, is_order=is_order,
+        )
+        data = self._json(resp, path)
 
-        limiter = _order_limiter if is_order else _api_limiter
-        await limiter.acquire()
-
-        try:
-            resp = await self._client.request(
-                method,
-                path,
-                headers=self._headers(),
-                params=params,
-                json=json_body,
-            )
-        except httpx.HTTPError as exc:
-            raise BrokerError(f"HTTP error: {exc}") from exc
-
-        if resp.status_code >= 400:
-            raise BrokerError(
-                f"API error {resp.status_code}: {resp.text}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
-
-        data = resp.json()
-
-        # INDstocks wraps some responses in {"status": ..., "data": {...}}
+        # INDstocks wraps responses in {"status": ..., "data": ...} (historical data in
+        # {"success": ..., "data": ...})
         if isinstance(data, dict) and "data" in data:
             return data["data"]
         return data
+
+    async def _request_envelope(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        json_body: Optional[dict[str, Any]] = None,
+        is_order: bool = False,
+        require_data: bool = False,
+    ) -> Any:
+        """Send an order/portfolio request and return its ``data``, strictly.
+
+        A body reporting a failure (``status`` error/failure, ``success: false``, or
+        an ``error`` / ``error_type`` / ``error_code`` value) raises
+        ``BrokerError(kind="error_body")`` even with HTTP 200 — otherwise it would
+        read as an empty order book or no positions. ``data: null`` is returned only
+        under a success marker. A list is returned as-is, and so is a dict without
+        ``data`` unless ``require_data`` (then it is ``bad_payload``, like a bare JSON
+        ``null`` or other scalar, which is never read as "nothing").
+        """
+        resp = await self._send(
+            method, path, params=params, json_body=json_body, is_order=is_order,
+        )
+        payload = self._json(resp, path)
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            raise BrokerError(
+                f"{path}: unexpected payload {type(payload).__name__}: {str(payload)[:200]}",
+                status_code=resp.status_code,
+                body=resp.text,
+                kind="bad_payload",
+            )
+
+        def failure(reason: str) -> BrokerError:
+            text = _error_text(payload)
+            return BrokerError(
+                f"{path}: {reason}" + (f": {text}" if text else ""),
+                status_code=resp.status_code,
+                body=resp.text,
+                kind="error_body",
+            )
+
+        if _is_error_body(payload):
+            reported = payload.get("status", payload.get("success"))
+            raise failure(f"broker reported a failure (status={reported!r})")
+        if "data" not in payload:
+            if require_data:
+                raise BrokerError(
+                    f"{path}: the answer has no data: {str(payload)[:200]}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                    kind="bad_payload",
+                )
+            return payload
+
+        status = payload.get("status")
+        success = (isinstance(status, str) and status.strip().lower() == "success") or (
+            payload.get("success") is True
+        )
+        unmarked = "status" not in payload and "success" not in payload
+        if payload["data"] is None and not success:
+            raise failure("data is null without a success status")
+        if not (success or unmarked):
+            raise failure(f"unexpected status {status!r}")
+        return payload["data"]
 
     async def _request_text(
         self,
@@ -160,25 +384,7 @@ class INDstocksClient:
         params: Optional[dict[str, Any]] = None,
     ) -> str:
         """Send a request expecting text/CSV response (instruments endpoint)."""
-        if self._client is None:
-            raise BrokerError("Client not initialised. Use `async with` context manager.")
-
-        await _api_limiter.acquire()
-
-        try:
-            resp = await self._client.request(
-                method, path, headers=self._headers(), params=params,
-            )
-        except httpx.HTTPError as exc:
-            raise BrokerError(f"HTTP error: {exc}") from exc
-
-        if resp.status_code >= 400:
-            raise BrokerError(
-                f"API error {resp.status_code}: {resp.text}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
-
+        resp = await self._send(method, path, params=params)
         return resp.text
 
     # ── Market Data ──────────────────────────────────────────────────────
@@ -411,45 +617,76 @@ class INDstocksClient:
             payload["limit_price"] = order.price     # price → limit_price
         if order.trigger_price is not None:
             payload["trigger_price"] = order.trigger_price
+        if self._remarks_enabled:
+            # Echoed in the order book, so an uncertain placement can be found by it
+            payload["remarks"] = f"skopaq-{order.internal_id.hex[:24]}"
 
-        data = await self._request("POST", "/order", json_body=payload, is_order=True)
-        logger.info(
-            "Order placed: %s %s qty=%d security_id=%s",
-            order.side, order.symbol, order.quantity, order.security_id,
-        )
-
-        if isinstance(data, dict):
-            return OrderResponse(
-                order_id=str(data.get("order_id", "")),
-                status=str(data.get("status", "PENDING")),
-                message=str(data.get("message", "")),
+        try:
+            data = await self._request_envelope(
+                "POST", "/order", json_body=payload, is_order=True,
             )
-        return OrderResponse(order_id="", status="UNKNOWN", message=str(data))
+        except BrokerError as exc:
+            if exc.kind == "not_sent" or (exc.kind == "http" and 400 <= exc.status_code < 500):
+                raise                               # definitely not placed / rejected
+            # 5xx, a dropped connection, a non-JSON or failure body: it may exist
+            logger.error(
+                "Order placement uncertain: %s %s qty=%d security_id=%s — %s",
+                order.side, order.symbol, order.quantity, order.security_id, exc,
+            )
+            raise OrderPlacementUncertain(
+                str(exc), status_code=exc.status_code, body=exc.body, kind=exc.kind,
+            ) from exc
+
+        order_id = data.get("order_id") if isinstance(data, dict) else None
+        if isinstance(order_id, int) and not isinstance(order_id, bool):
+            order_id = str(order_id)
+        if not isinstance(order_id, str) or not order_id.strip():
+            logger.error(
+                "Order placement uncertain: %s %s qty=%d — no order id in %r",
+                order.side, order.symbol, order.quantity, data,
+            )
+            raise OrderPlacementUncertain(
+                f"POST /order: no order id in the answer ({_error_text(data) or data!r})",
+                status_code=200,
+                body=repr(data),
+                kind="bad_payload",
+            )
+
+        status = _order_status_of(data)
+        logger.info(
+            "Order accepted: %s %s qty=%d security_id=%s → %s %s",
+            order.side, order.symbol, order.quantity, order.security_id, order_id, status,
+        )
+        return OrderResponse(
+            order_id=order_id.strip(),
+            status=status,
+            message=str(data.get("message") or ""),
+        )
 
     async def modify_order(self, req: ModifyOrderRequest) -> OrderResponse:
         """Modify a pending order.
 
-        Endpoint: ``POST /order/modify``
+        Endpoint: ``POST /order/modify``. ``qty`` and ``limit_price`` are both
+        mandatory, so both must be given. At most 25 modifications per order.
         """
+        if req.quantity is None or req.price is None:
+            raise ValueError("modify_order needs both quantity and price (INDstocks requires both)")
         payload: dict[str, Any] = {
             "order_id": req.order_id,
             "segment": req.segment.value,
+            "qty": req.quantity,                    # quantity → qty
+            "limit_price": req.price,               # price → limit_price
         }
-        if req.quantity is not None:
-            payload["qty"] = req.quantity           # quantity → qty
-        if req.price is not None:
-            payload["limit_price"] = req.price      # price → limit_price
 
-        data = await self._request(
+        data = await self._request_envelope(
             "POST", "/order/modify", json_body=payload, is_order=True,
         )
-        if isinstance(data, dict):
-            return OrderResponse(
-                order_id=req.order_id,
-                status=str(data.get("status", "PENDING")),
-                message=str(data.get("message", "")),
-            )
-        return OrderResponse(order_id=req.order_id, status="UNKNOWN", message=str(data))
+        message = data.get("message") if isinstance(data, dict) else None
+        return OrderResponse(
+            order_id=req.order_id,
+            status=_order_status_of(data),
+            message=str(message or ""),
+        )
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderResponse:
         """Cancel a pending order.
@@ -460,84 +697,161 @@ class INDstocksClient:
             "order_id": req.order_id,
             "segment": req.segment.value,
         }
-        data = await self._request(
+        data = await self._request_envelope(
             "POST", "/order/cancel", json_body=payload, is_order=True,
         )
+        # A cancel races the order filling: re-read the order for its final state
+        message = data.get("message") if isinstance(data, dict) else None
+        return OrderResponse(
+            order_id=req.order_id,
+            status=_order_status_of(data),
+            message=str(message or ""),
+        )
+
+    @staticmethod
+    def _rows(data: Any, path: str, *wrapper_keys: str) -> list[dict[str, Any]]:
+        """The rows of a list answer: a list, ``None`` (empty under a success status),
+        or a dict holding the list under one of ``wrapper_keys``. Anything else raises
+        ``BrokerError(kind="bad_payload")`` — never read as "no rows"."""
+        if data is None:
+            return []
+        if isinstance(data, list):
+            return _dict_rows(data)
         if isinstance(data, dict):
-            return OrderResponse(
-                order_id=req.order_id,
-                status=str(data.get("status", "CANCELLED")),
-                message=str(data.get("message", "Cancelled")),
-            )
-        return OrderResponse(order_id=req.order_id, status="CANCELLED", message=str(data))
+            for key in wrapper_keys:
+                if isinstance(data.get(key), list):
+                    return _dict_rows(data[key])
+        raise BrokerError(
+            f"{path}: unexpected payload {type(data).__name__}: {str(data)[:200]}",
+            kind="bad_payload",
+        )
 
     async def get_order_book(self) -> list[dict[str, Any]]:
-        """Fetch all orders for the day.
+        """Fetch all orders for the day (raw rows; parse with ``order_status``).
 
-        Endpoint: ``GET /order-book``
+        Endpoint: ``GET /order-book``. An empty book is ``data: null`` under
+        ``status: success``; a failure body or an unexpected payload raises.
         """
-        data = await self._request("GET", "/order-book")
-        if isinstance(data, list):
-            return data
-        return []
+        data = await self._request_envelope("GET", "/order-book")
+        return self._rows(data, "/order-book", "orders")
 
     async def get_order(self, order_id: str, segment: str = "EQUITY") -> dict[str, Any]:
-        """Fetch a single order by ID.
+        """Fetch a single order by ID (a raw row; ``{}`` if the broker has none).
 
-        Endpoint: ``GET /order?order_id=...&segment=...``
+        Endpoint: ``GET /order``. The docs send ``order_id`` and ``segment`` as a JSON
+        body on the GET; query params are sent too, in case only one form works.
         """
-        data = await self._request(
-            "GET", "/order",
-            params={"order_id": order_id, "segment": segment},
-        )
+        body = {"order_id": order_id, "segment": segment}
+        # The row must come from `data`: an envelope's own `status: success` is not an
+        # order status (it would read as a full fill)
+        data = await self._request_envelope("GET", "/order", params=body, json_body=body,
+                                            require_data=True)
         if isinstance(data, dict):
             return data
+        if isinstance(data, list):
+            for row in _dict_rows(data):
+                if order_id in (str(row.get("id", "")), str(row.get("order_id", ""))):
+                    return row
         return {}
 
-    async def get_trades(self, order_id: str) -> list[dict[str, Any]]:
-        """Fetch trades for an order.
+    async def get_trades(self, order_id: str, segment: str = "EQUITY") -> list[dict[str, Any]]:
+        """Fetch the fills of one order.
 
-        Endpoint: ``GET /trades/{order_id}``
+        The docs disagree on the path: ``GET /order/trades`` with a JSON body
+        ``{order_id, segment}`` (Orders page, OpenAPI) or ``GET /trades/{order_id}``
+        (API overview). A 404/405 from one falls back to the other for this call; a
+        path becomes the preference only once it returned a fill, because a 404 can
+        also mean "no trades yet".
         """
-        data = await self._request("GET", f"/trades/{order_id}")
-        if isinstance(data, list):
-            return data
-        return []
+        body = {"order_id": order_id, "segment": segment}
+        first, second = ("order", "legacy")
+        if self._trades_path == "legacy":
+            first, second = second, first
+        for which in (first, second):
+            try:
+                if which == "order":
+                    data = await self._request_envelope(
+                        "GET", "/order/trades", params=body, json_body=body,
+                    )
+                else:
+                    data = await self._request_envelope("GET", f"/trades/{order_id}")
+            except BrokerError as exc:
+                if which == first and exc.kind == "http" and exc.status_code in (404, 405):
+                    continue                        # try the other path for this call
+                raise
+            rows = self._rows(data, "trades", "trades")
+            if rows:
+                self._trades_path = which
+            return rows
+        return []                                   # not reached: the second path returns or raises
 
     async def get_trade_book(self, segment: str = "EQUITY") -> list[dict[str, Any]]:
-        """Fetch all trades.
+        """Fetch all of today's fills (one row per fill; join on ``exch_order_id``).
 
         Endpoint: ``GET /trade-book?segment=...``
         """
-        data = await self._request(
+        data = await self._request_envelope(
             "GET", "/trade-book",
             params={"segment": segment},
         )
-        if isinstance(data, list):
-            return data
-        return []
+        return self._rows(data, "/trade-book", "trades")
 
     # ── Portfolio ─────────────────────────────────────────────────────────
 
     async def get_positions(self) -> list[Position]:
-        """Fetch current open positions.
+        """Fetch today's equity positions (CNC and INTRADAY).
 
-        Endpoint: ``GET /portfolio/positions``
+        Endpoint: ``GET /portfolio/positions?segment=equity&product=cnc|intraday``
+        (both params required, lowercase). Each row's ``product`` is set to the
+        product queried. If the broker refuses both queries (400/404/422), the call
+        is retried without params and rows keep their own product. A failed read
+        raises — it never becomes "no positions".
         """
-        data = await self._request("GET", "/portfolio/positions")
-        if isinstance(data, list):
-            return [Position(**p) for p in data]
-        return []
+        positions: list[Position] = []
+        refused: dict[str, BrokerError] = {}
+        for product in ("cnc", "intraday"):
+            try:
+                data = await self._request_envelope(
+                    "GET", "/portfolio/positions",
+                    params={"segment": "equity", "product": product},
+                )
+            except BrokerError as exc:
+                if exc.kind == "http" and exc.status_code in (400, 404, 422):
+                    refused[product] = exc
+                    continue
+                raise
+            for row in self._rows(data, "/portfolio/positions", "net_positions"):
+                position = Position(**row)
+                position.product = product.upper()
+                positions.append(position)
+
+        if len(refused) == 2:
+            logger.warning(
+                "Positions query with segment/product refused (%s); retrying without",
+                refused["cnc"],
+            )
+            data = await self._request_envelope("GET", "/portfolio/positions")
+            return [
+                Position(**row)
+                for row in self._rows(data, "/portfolio/positions", "net_positions")
+            ]
+        if "cnc" in refused:
+            # CNC rows are the ones Skopaq trades: without them the read has failed
+            raise refused["cnc"]
+        if "intraday" in refused:
+            # Intraday rows never count for a CNC SELL, so CNC rows alone are safe
+            logger.warning(
+                "Intraday positions query refused (%s); using CNC rows only", refused["intraday"],
+            )
+        return positions
 
     async def get_holdings(self) -> list[Holding]:
-        """Fetch delivery holdings.
+        """Fetch delivery holdings (``total_qty`` / ``avg_price`` parse via aliases).
 
-        Endpoint: ``GET /portfolio/holdings``
+        Endpoint: ``GET /portfolio/holdings``. A failed read raises.
         """
-        data = await self._request("GET", "/portfolio/holdings")
-        if isinstance(data, list):
-            return [Holding(**h) for h in data]
-        return []
+        data = await self._request_envelope("GET", "/portfolio/holdings")
+        return [Holding(**h) for h in self._rows(data, "/portfolio/holdings", "holdings")]
 
     async def get_funds(self) -> Funds:
         """Fetch available funds and margin.

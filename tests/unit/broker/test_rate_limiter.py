@@ -46,3 +46,23 @@ async def test_tokens_refill_over_time():
     elapsed = time.monotonic() - start
     # Should not block since token was refilled
     assert elapsed < 0.1
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_never_lets_more_than_the_limit_through_in_any_second():
+    from skopaq.broker.rate_limiter import SlidingWindowLimiter
+
+    now = {"t": 0.0}
+
+    async def sleep(seconds):
+        now["t"] += seconds
+
+    limiter = SlidingWindowLimiter(12, 1.0, clock=lambda: now["t"], sleep=sleep)
+    times = []
+    for _ in range(40):
+        await limiter.acquire()
+        times.append(now["t"])
+        now["t"] += 0.01                     # the request itself
+    for start in times:
+        assert sum(1 for t in times if start <= t < start + 1.0) <= 12
+    assert times[11] < 0.2 and times[12] >= 1.0

@@ -83,6 +83,15 @@ class TradeRepository:
             return TradeRecord(**result.data[0])
         return None
 
+    def delete(self, trade_id: UUID) -> None:
+        """Delete a trade by ID (only to undo a row the lifecycle just inserted)."""
+        (
+            self._client.table(self._table)
+            .delete()
+            .eq("id", str(trade_id))
+            .execute()
+        )
+
     def get_by_id(self, trade_id: UUID) -> Optional[TradeRecord]:
         """Fetch a single trade by ID."""
         result = (
@@ -149,22 +158,41 @@ class TradeRepository:
         )
         return [TradeRecord(**row) for row in (result.data or [])]
 
-    def find_open_buy(self, symbol: str) -> Optional[TradeRecord]:
+    def find_by_order_id(self, order_id: str) -> Optional[TradeRecord]:
+        """The trade row carrying this broker order id (``trades.order_id`` is unique).
+
+        Used to record a live BUY's late fill on the row its order already has.
+        """
+        result = (
+            self._client.table(self._table)
+            .select("*")
+            .eq("order_id", order_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return TradeRecord(**result.data[0])
+        return None
+
+    def find_open_buy(self, symbol: str,
+                      is_paper: Optional[bool] = None) -> Optional[TradeRecord]:
         """Find the most recent BUY trade for *symbol* that hasn't been closed.
 
         Used by ``TradeLifecycleManager`` to link a SELL trade back to its
-        opening BUY for P&L calculation and reflection triggering.
+        opening BUY for P&L calculation and reflection triggering. ``is_paper``
+        limits it to paper or live rows (a live SELL closes live rows only);
+        None keeps any row, as paper always has.
         """
-        result = (
+        query = (
             self._client.table(self._table)
             .select("*")
             .eq("symbol", symbol)
             .eq("side", "BUY")
             .is_("closed_at", "null")
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
         )
+        if is_paper is not None:
+            query = query.eq("is_paper", is_paper)
+        result = query.order("created_at", desc=True).limit(1).execute()
         if result.data:
             return TradeRecord(**result.data[0])
         return None
