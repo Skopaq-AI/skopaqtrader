@@ -16,6 +16,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime, timezone
+from typing import Optional
 
 import typer
 
@@ -47,6 +48,10 @@ from skopaq.cli.display import (
 )
 
 logger = logging.getLogger(__name__)
+
+# `skopaq trade` (live), stopped while a confirmed fill's trade row is being written: wait
+# this long for the write before the process exits
+_PERSIST_WAIT_S = 30.0
 
 app = typer.Typer(
     name="skopaq",
@@ -401,20 +406,31 @@ async def _run_trade(symbol: str, trade_date: str):
     if live_client is not None:
         await live_client.__aenter__()
 
+    persist: Optional[asyncio.Future] = None
     try:
         result = await graph.analyze_and_execute(
             analysis_symbol, trade_date,
             regime_scale=regime_scale,
             calendar_scale=calendar_scale,
         )
+        # Post-execution: persist the trade (its P&L feeds the loss limits) and, when
+        # reflection is on, link BUY/SELL and reflect — first, before the client is closed
+        # and the alerts drained. Live, the fill is final at the broker: a Ctrl+C meanwhile
+        # must not lose its row, so the write runs to the end (shielded, awaited below)
+        persist = asyncio.ensure_future(_run_lifecycle(
+            config, _reflection_graph(config, graph, memory_store), memory_store, result))
+        await (asyncio.shield(persist) if live_client is not None else persist)
     finally:
         if live_client is not None:
+            if persist is not None and not persist.done():
+                await asyncio.wait({persist}, timeout=_PERSIST_WAIT_S)   # cancelled meanwhile
             await live_client.__aexit__(None, None, None)
+            # Order alerts are sent in the background: let them go out before exiting
+            from skopaq.execution.order_alerts import get_alerter
 
-    # Post-execution: persist the trade (its P&L feeds the loss limits) and,
-    # when reflection is on, link BUY/SELL and reflect.
-    await _run_lifecycle(config, _reflection_graph(config, graph, memory_store),
-                         memory_store, result)
+            drain = getattr(get_alerter(), "drain", None)
+            if drain is not None:
+                await drain()
 
     return result
 
@@ -719,6 +735,12 @@ def monitor(
 
     result = asyncio.run(_run_monitor(config, ai_enabled))
     display_monitor_result(result)
+    # Live: positions still open, a failed exit or an unconfirmed order at the end is
+    # rc 4, which the scheduler turns into a "check the broker" alert
+    if config.trading_mode == "live" and (result.positions_left or result.orders_unconfirmed):
+        from skopaq.execution.daemon import POSITIONS_LEFT_EXIT_CODE
+
+        raise typer.Exit(POSITIONS_LEFT_EXIT_CODE)
 
 
 async def _run_monitor(config, ai_enabled: bool):
@@ -796,6 +818,8 @@ async def _run_monitor(config, ai_enabled: bool):
             ai_enabled=ai_enabled,
             # No analysis graph here: record the exit and its P&L, no reflection.
             on_exit=lambda signal, execution: _record_exit(config, None, None, signal, execution),
+            on_late_fill=lambda tracked, conf: _record_late_fill(config, None, None, tracked,
+                                                                 conf),
         )
         return await monitor_instance.run()
 
@@ -1148,12 +1172,14 @@ def _reflection_graph(config, graph, memory_store):
     return None
 
 
-async def _record_exit(config, graph, memory_store, signal, execution) -> None:
+async def _record_exit(config, graph, memory_store, signal, execution, *,
+                       rollback_unbooked: bool = False) -> bool:
     """Persist an exit that did not come from an analysis (monitor, EOD close).
 
     It goes through the same lifecycle as an analysed trade, so the opening
     BUY row is closed with its realized P&L, which the loss limits read back
-    (``skopaq.execution.pnl_history``).
+    (``skopaq.execution.pnl_history``). False when it was not booked
+    (``_run_lifecycle``, which ``rollback_unbooked`` is passed to).
     """
     from datetime import timedelta
 
@@ -1163,11 +1189,172 @@ async def _record_exit(config, graph, memory_store, signal, execution) -> None:
     result = AnalysisResult(
         symbol=signal.symbol, trade_date=ist_today, signal=signal, execution=execution,
     )
-    await _run_lifecycle(config, _reflection_graph(config, graph, memory_store),
-                         memory_store, result)
+    return await _run_lifecycle(config, _reflection_graph(config, graph, memory_store),
+                                memory_store, result, rollback_unbooked=rollback_unbooked)
 
 
-async def _run_lifecycle(config, graph, memory_store, result):
+def _trade_repository(config):
+    """A TradeRepository over Supabase, or None when it is not configured or unreachable."""
+    if not config.supabase_url or not config.supabase_service_key.get_secret_value():
+        return None
+    try:
+        from supabase import create_client
+        from skopaq.db.repositories import TradeRepository
+
+        return TradeRepository(create_client(
+            config.supabase_url, config.supabase_service_key.get_secret_value()))
+    except Exception:
+        logger.warning("Supabase unavailable — trade rows not written", exc_info=True)
+        return None
+
+
+def _delta_price(avg_now, filled_now, avg_before, filled_before):
+    """Average price of the shares filled since the last report: (P·F − p·f) / (F − f)
+    when both averages are known, else the current average (None if unknown)."""
+    from decimal import Decimal
+
+    if avg_now is None:
+        return None
+    if avg_before is None or not filled_before:
+        return avg_now
+    price = (avg_now * filled_now - avg_before * filled_before) / (filled_now - filled_before)
+    return price.quantize(Decimal("0.0001")) if price > 0 else avg_now
+
+
+async def _record_late_fill(config, graph, memory_store, tracked, conf) -> bool:
+    """Persist a live fill the broker confirmed after its order had been reported.
+
+    The monitor or CLOSING resumed the order (``tracked``) and read its final state
+    (``conf``); only the shares beyond ``tracked.filled_reported`` are new.
+
+    - BUY: the order's open row gets the new quantity and average price; a row already
+      closed gets a separate row for the extra shares (``order_id`` None: it is UNIQUE);
+      a BUY that was reported failed or unconfirmed gets its row now.
+    - SELL (a stuck exit that filled later): the extra shares close BUY rows like any
+      other exit, at their own average price.
+
+    Returns False when the trade rows could not be written, so the caller does not count
+    the shares as booked; True otherwise — also when Supabase is not configured (there
+    are no rows to write) and when an exit with no price at all is left to the user
+    (CRITICAL ``exit-late-unpriced``), so that no process books it again.
+    """
+    from decimal import Decimal
+
+    from skopaq.broker.models import ExecutionResult, OrderType, TradingSignal
+    from skopaq.db.models import TradeRecord
+
+    filled = conf.filled_qty
+    if filled is None or filled <= tracked.filled_reported:
+        return True
+    delta = filled - tracked.filled_reported
+    price = _delta_price(conf.avg_price, filled, tracked.avg_price_reported,
+                         tracked.filled_reported)
+    # INDstocks' flat fee is per order that fills: charged now unless already reported
+    fee = Decimal("0") if tracked.filled_reported else Decimal("20")
+
+    if tracked.side == "SELL":
+        from skopaq.execution.order_alerts import get_alerter
+
+        source = conf.price_source
+        if not price:
+            # No broker price: the exit's reference price (the LTP when it was sent) or
+            # its limit price, as a normal exit would use — never a P&L of 0
+            estimate = getattr(tracked.signal, "entry_price", None) or tracked.price
+            if not estimate:
+                get_alerter().alert(
+                    "CRITICAL", f"exit-late-unpriced:{tracked.order_id}",
+                    f"SELL {tracked.symbol}: order {tracked.order_id} filled {delta} more but "
+                    "the broker gave no price and there is no estimate; the trade rows are "
+                    "left open — close them by hand at the broker's fill price",
+                    order_ids=[tracked.order_id])
+                # Left to the user: counted as handled, so no process books them after
+                # the user has
+                return True
+            price, source = Decimal(str(estimate)), "estimate"
+            get_alerter().alert(
+                "WARNING", f"fill-price-unknown:{tracked.order_id}",
+                f"SELL {tracked.symbol}: order {tracked.order_id} filled {delta} more but the "
+                f"broker gave no price; recorded at the estimate {price}",
+                order_ids=[tracked.order_id])
+        signal = TradingSignal(
+            symbol=tracked.symbol, action="SELL", confidence=100,
+            entry_price=float(price), order_type=OrderType.MARKET,
+            quantity=delta, reasoning=f"Late fill of exit order {tracked.order_id}",
+        )
+        execution = ExecutionResult(
+            success=True, signal=signal, mode="live",
+            fill_price=float(price), brokerage=float(fee),
+            filled_quantity=delta, requested_quantity=delta, outcome="late_fill",
+            order_ids=[tracked.order_id], fill_price_source=source,
+            broker_message=f"late fill of {tracked.order_id}",
+        )
+        # Not booked: its SELL row is removed again, as the next booking writes its own
+        booked = await _record_exit(config, graph, memory_store, signal, execution,
+                                    rollback_unbooked=True)
+        return booked is not False
+
+    repo = _trade_repository(config)
+    if repo is None:
+        # Not configured: nothing to book; configured but unreachable: not booked
+        return not (config.supabase_url and config.supabase_service_key.get_secret_value())
+    from skopaq.execution.order_alerts import get_alerter
+
+    avg, source = conf.avg_price, conf.price_source
+    if not avg:
+        # No broker price: the order's limit price (or its signal's reference price) as the
+        # cost basis, as a normal entry would use — a row without one books its exit at 0
+        estimate = tracked.price or getattr(tracked.signal, "entry_price", None)
+        if estimate:
+            avg, source = Decimal(str(estimate)), "estimate"
+            price = price or avg
+            get_alerter().alert(
+                "WARNING", f"fill-price-unknown:{tracked.order_id}",
+                f"BUY {tracked.symbol}: order {tracked.order_id} filled {delta} more but the "
+                f"broker gave no price; recorded at the estimate {avg}",
+                order_ids=[tracked.order_id])
+        else:
+            get_alerter().alert(
+                "CRITICAL", f"late-fill-unpriced:{tracked.order_id}",
+                f"BUY {tracked.symbol}: order {tracked.order_id} filled {delta} more but the "
+                "broker gave no price and there is no estimate; its trade row has no cost "
+                "basis — set it by hand from the broker's fill price, or its exit books a "
+                "P&L of 0", order_ids=[tracked.order_id])
+    broker = {"outcome": "late_fill", "order_ids": [tracked.order_id],
+              "late_fill_of": tracked.order_id, "fill_price_source": source}
+    try:
+        row = repo.find_by_order_id(tracked.order_id)
+        if row is not None and row.closed_at is None:
+            updates = {"quantity": str(filled)}
+            if conf.avg_price or (avg and not (row.fill_price or row.price)):
+                updates["fill_price"] = str(avg)
+            repo.update(row.id, updates)
+        elif row is not None:
+            repo.insert(TradeRecord(
+                symbol=tracked.symbol, side="BUY", quantity=delta, order_id=None,
+                fill_price=price, price=price, status="COMPLETE", is_paper=False,
+                brokerage=Decimal("0"), signal_source="skopaq-ai",
+                entry_reason=f"Late fill of {tracked.order_id} after its row was closed",
+                model_signals={"broker": broker},
+            ))
+        else:
+            repo.insert(TradeRecord(
+                symbol=tracked.symbol, side="BUY", quantity=filled,
+                order_id=tracked.order_id, fill_price=avg, price=avg,
+                status="COMPLETE", is_paper=False, brokerage=fee, signal_source="skopaq-ai",
+                entry_reason=f"Late fill of {tracked.order_id} adopted by the monitor",
+                model_signals={"broker": broker},
+            ))
+        logger.warning("Late fill of BUY %s (%s %s) recorded", tracked.order_id, delta,
+                       tracked.symbol)
+        return True
+    except Exception:
+        logger.warning("Recording the late fill of %s failed", tracked.order_id,
+                       exc_info=True)
+        return False
+
+
+async def _run_lifecycle(config, graph, memory_store, result, *,
+                         rollback_unbooked: bool = False) -> bool:
     """Run trade lifecycle tracking (BUY/SELL linkage + auto-reflection).
 
     Flow:
@@ -1175,11 +1362,18 @@ async def _run_lifecycle(config, graph, memory_store, result):
         2. Run lifecycle manager (BUY/SELL linkage + reflection; ``graph=None``
            links and records P&L without reflecting)
 
-    Silently does nothing if Supabase is not configured.
+    Silently does nothing if Supabase is not configured (True: nothing to write).
+    Returns False when the trade was not booked: a BUY's row could not be inserted, the
+    lifecycle failed, or a live SELL closed no BUY row because the rows could not be read
+    (a caller that books it again — a late fill — relies on it; the others log it). A
+    SELL whose row could not be inserted but whose BUY rows were closed is booked: its
+    P&L is. ``rollback_unbooked``: a SELL that closed no row has its row removed again,
+    so booking it again does not leave a second one.
     """
     if not config.supabase_url or not config.supabase_service_key.get_secret_value():
-        return
+        return True
 
+    booked = True
     try:
         from supabase import create_client
         from skopaq.db.repositories import TradeRepository
@@ -1195,6 +1389,7 @@ async def _run_lifecycle(config, graph, memory_store, result):
         # This is the critical link — without it, find_open_buy() never finds
         # BUYs and the entire self-evolution loop is broken.
         trade_record = _build_trade_record(result, config)
+        saved = None
         if trade_record is not None:
             try:
                 saved = trade_repo.insert(trade_record)
@@ -1205,6 +1400,8 @@ async def _run_lifecycle(config, graph, memory_store, result):
                     saved.id, trade_record.is_paper,
                 )
             except Exception:
+                if trade_record.side != "SELL":
+                    booked = False            # a BUY is booked by its row alone
                 logger.warning(
                     "Failed to persist trade to Supabase — lifecycle will "
                     "continue but BUY/SELL linkage may not work",
@@ -1213,9 +1410,19 @@ async def _run_lifecycle(config, graph, memory_store, result):
 
         # Step 2: Run lifecycle (BUY/SELL linkage + reflection)
         lifecycle = TradeLifecycleManager(trade_repo, graph, memory_store)
-        await lifecycle.on_trade(result)
+        if await lifecycle.on_trade(result) is False:
+            booked = False                    # a SELL that closed no BUY row
+            if rollback_unbooked and saved is not None:
+                try:
+                    trade_repo.delete(saved.id)
+                    result.trade_id = None
+                except Exception:
+                    logger.warning("Removing the unbooked SELL row %s failed", saved.id,
+                                   exc_info=True)
     except Exception:
         logger.warning("Trade lifecycle processing failed", exc_info=True)
+        return False
+    return booked
 
 
 def _build_trade_record(result, config):
@@ -1232,7 +1439,15 @@ def _build_trade_record(result, config):
         return None
 
     from decimal import Decimal
+    from skopaq.broker.models import (
+        filled_quantity_of,
+        is_remaining_open,
+        order_ids_of,
+        outcome_of,
+    )
     from skopaq.db.models import TradeRecord
+
+    execution = result.execution
 
     # Build model_signals dict from cache/timing metadata
     model_signals = {}
@@ -1241,6 +1456,27 @@ def _build_trade_record(result, config):
         model_signals["cache_misses"] = result.cache_misses
     if result.duration_seconds:
         model_signals["duration_seconds"] = result.duration_seconds
+
+    # Live: the row is what the broker confirmed — the filled quantity, the order ids
+    # (none on a late-fill row: trades.order_id is UNIQUE and the order may be on a row)
+    order_id = None
+    if execution.mode == "live":
+        ids = order_ids_of(execution)
+        late = outcome_of(execution) == "late_fill"
+        if not late:
+            order_id = ",".join(ids)[:255] or None
+        requested = execution.requested_quantity
+        broker = {
+            "outcome": outcome_of(execution),
+            "requested_qty": _json_number(requested) if requested is not None else None,
+            "fill_price_source": execution.fill_price_source,
+            "remaining_open": is_remaining_open(execution),
+            "fill_unconfirmed": execution.fill_unconfirmed is True,
+            "order_ids": ids,
+        }
+        if late and ids:
+            broker["late_fill_of"] = ids[0]
+        model_signals["broker"] = broker
 
     # Determine exchange and product based on asset class
     is_crypto = config.asset_class == "crypto"
@@ -1255,7 +1491,8 @@ def _build_trade_record(result, config):
         exchange="BINANCE" if is_crypto else "NSE",
         product="SPOT" if is_crypto else "CNC",
         side=result.signal.action,
-        quantity=result.signal.quantity or Decimal("1"),
+        quantity=filled_quantity_of(execution, result.signal.quantity or Decimal("1")),
+        order_id=order_id,
         price=(
             Decimal(str(result.signal.entry_price))
             if result.signal.entry_price else None
@@ -1283,6 +1520,12 @@ def _build_trade_record(result, config):
         },
         model_signals=model_signals,
     )
+
+
+def _json_number(value):
+    """A Decimal as a JSON number (int when whole) for model_signals."""
+    number = float(value)
+    return int(number) if number == int(number) else number
 
 
 def _setup_logging(level: str = "INFO") -> None:
