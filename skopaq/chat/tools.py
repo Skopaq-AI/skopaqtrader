@@ -212,14 +212,7 @@ async def trade_stock(symbol: str, date: str = "") -> str:
             lines.append(f"- Signal: **{signal.action}** ({signal.confidence}%)")
 
         if execution:
-            status = "Filled" if execution.success else "Rejected"
-            lines.append(f"- Execution: {status} ({execution.mode} mode)")
-            if execution.fill_price:
-                lines.append(f"- Fill Price: ₹{execution.fill_price:,.2f}")
-            if execution.slippage:
-                lines.append(f"- Slippage: {execution.slippage:.4f}")
-            if not execution.success and execution.rejection_reason:
-                lines.append(f"- Reason: {execution.rejection_reason}")
+            lines.extend(_execution_lines(execution))
         else:
             lines.append("- No execution (HOLD signal or analysis-only)")
 
@@ -658,13 +651,21 @@ async def check_safety(
             reasoning="Safety check query",
         )
 
-        positions = await infra.order_router.get_positions()
-        holdings = await infra.order_router.get_settled_holdings()
-        funds = await infra.order_router.get_funds()
+        # A live SELL is checked against the broker's open orders (read before
+        # positions); None in paper, where today's reads apply
+        router = infra.order_router
+        inputs = await router.sell_inputs(order) if order.side == Side.SELL else None
+        if inputs is None:
+            positions = await router.get_positions()
+            holdings = await router.get_settled_holdings()
+        else:
+            positions, holdings = inputs.positions, inputs.holdings
+        funds = await router.get_funds()
         portfolio_value = funds.available_cash + funds.used_margin
 
         result = infra.safety_checker.validate(
-            order, signal, positions, funds, portfolio_value, holdings=holdings
+            order, signal, positions, funds, portfolio_value, holdings=holdings,
+            sell_context=inputs.context if inputs is not None else None,
         )
 
         if result.passed:
@@ -740,6 +741,35 @@ async def get_market_data(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _execution_lines(execution) -> list[str]:
+    """The execution part of trade_stock's answer.
+
+    A live order says how much the broker confirmed filled, which broker orders it
+    placed, and when one may still be working. Paper output is as before.
+    """
+    from skopaq.broker.models import fill_status_of, filled_quantity_of, order_ids_of
+
+    status = fill_status_of(execution)
+    label = {"FILLED": "Filled", "UNCONFIRMED": "Unconfirmed", "FAILED": "Rejected"}.get(status)
+    if label is None:
+        filled = filled_quantity_of(execution, 0)
+        requested = getattr(execution, "requested_quantity", None) or "?"
+        label = f"Partially filled ({filled} of {requested})"
+    lines = [f"- Execution: {label} ({execution.mode} mode)"]
+    if execution.fill_price:
+        lines.append(f"- Fill Price: ₹{execution.fill_price:,.2f}")
+    if execution.slippage:
+        lines.append(f"- Slippage: {execution.slippage:.4f}")
+    order_ids = order_ids_of(execution)
+    if order_ids:
+        lines.append(f"- Orders: {', '.join(order_ids)}")
+    if not execution.success and execution.rejection_reason:
+        lines.append(f"- Reason: {execution.rejection_reason}")
+    elif status == "PARTIAL" and execution.broker_message:
+        lines.append(f"- Note: {execution.broker_message}")
+    return lines
 
 
 async def _inject_paper_quote(infra: Infrastructure, symbol: str) -> None:
