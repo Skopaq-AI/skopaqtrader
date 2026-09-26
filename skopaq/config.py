@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import logging
+import math
+from typing import Any, Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError, ValidatorFunctionWrapHandler, field_validator
+from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# Live order settings typed as numbers/bools. Every service builds a SkopaqConfig, so a
+# typo in one of them must not stop api, telegram and the scheduler: an unparseable (or
+# non-finite) value is logged and replaced by the field's default (off, for the bools).
+_LENIENT_FIELDS = (
+    "order_fill_timeout_seconds",
+    "order_fill_poll_interval_seconds",
+    "order_cancel_confirm_timeout_seconds",
+    "order_exit_attempt_timeout_seconds",
+    "order_exit_max_attempts",
+    "order_exit_reprice_buffer_pct",
+    "order_reconcile_timeout_seconds",
+    "order_shutdown_margin_seconds",
+    "order_sell_fill_lag_window_seconds",
+    "allow_sell_without_order_book",
+    "indstocks_order_remarks_enabled",
+    "monitor_resync_cycles",
+)
 
 
 class SkopaqConfig(BaseSettings):
@@ -42,6 +65,26 @@ class SkopaqConfig(BaseSettings):
     initial_paper_capital: float = 1_000_000.0  # INR
     # Kill switch set at deploy level; also `skopaq halt` (skopaq/execution/kill_switch.py)
     trading_halted: bool = False
+
+    # ── Live order confirmation (skopaq/execution/live_orders.py) ───────
+    # Clamped to the [ranges] where they are used, with a WARNING naming the var; an
+    # unparseable value is logged and replaced by the default (_LENIENT_FIELDS)
+    order_fill_timeout_seconds: float = 30.0  # entries: wait, then cancel the rest [5, 120]
+    order_fill_poll_interval_seconds: float = 1.0  # status polls (order history: 15 req/s) [0.5, 5]
+    order_cancel_confirm_timeout_seconds: float = 10.0  # retry the cancel, re-read [3, 30]
+    order_exit_attempt_timeout_seconds: float = 10.0  # protective exits, per attempt [3, 30]
+    order_exit_max_attempts: int = 3  # cancel + re-place a resting exit at most N times [1, 5]
+    # re-placed LIMIT = LTP × (1 − buf% × (attempt − 1)), at most 5% [0.1, 2]
+    order_exit_reprice_buffer_pct: float = 0.5
+    order_reconcile_timeout_seconds: float = 15.0  # find an uncertain placement in the book [5, 30]
+    order_shutdown_margin_seconds: float = 60.0  # stop order work before kill-after [20, 120]
+    # count filled SELLs that positions don't show yet for this long [60, 1800]
+    order_sell_fill_lag_window_seconds: float = 600.0
+    order_extra_terminal_statuses: str = ""  # comma-separated broker statuses to treat as final
+    allow_sell_without_order_book: bool = False  # DANGER: SELL even if the order book can't be read
+    indstocks_order_remarks_enabled: bool = False  # tag orders with `remarks` (docs: unreleased)
+    order_lock_dir: str = "~/.skopaq/locks"  # per-symbol SELL locks (shared home volume)
+    order_journal_dir: str = "~/.skopaq/orders"  # per-day order journal (shared home volume)
 
     # ── LLM API Keys ───────────────────────────────────────────────────
     google_api_key: SecretStr = SecretStr("")  # Gemini Flash (scanner)
@@ -113,6 +156,7 @@ class SkopaqConfig(BaseSettings):
     monitor_ai_interval_cycles: int = 6  # AI every 6 polls (~60s)
     monitor_trailing_stop_enabled: bool = False
     monitor_trailing_stop_pct: float = 0.02  # 2% trail from high-water
+    monitor_resync_cycles: int = 3  # live: re-read broker book/positions every N polls [1, 60]
 
     # ── Daemon (autonomous session) ──────────────────────────────────
     daemon_max_trades_per_session: int = 3  # Max BUY orders per day
@@ -201,3 +245,20 @@ class SkopaqConfig(BaseSettings):
 
     # ── Logging ─────────────────────────────────────────────────────────────
     log_level: str = "INFO"
+
+    @field_validator(*_LENIENT_FIELDS, mode="wrap")
+    @classmethod
+    def _default_if_malformed(cls, value: Any, handler: ValidatorFunctionWrapHandler,
+                              info: ValidationInfo) -> Any:
+        """A malformed live order setting becomes its default, with a WARNING."""
+        default = cls.model_fields[info.field_name].default
+        try:
+            parsed = handler(value)
+        except ValidationError:
+            parsed = None
+        else:
+            if not (isinstance(parsed, float) and not math.isfinite(parsed)):
+                return parsed
+        logger.warning("SKOPAQ_%s=%r is not a valid value; using the default %r",
+                       info.field_name.upper(), value, default)
+        return default
