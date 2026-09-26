@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +85,15 @@ async def notify_trade_event(
     status: str,
     pnl: float = 0,
     order_id: str = "",
+    reason: str = "",
 ) -> None:
-    """Send a trade event notification."""
-    emoji = {"BUY": "🟢", "SELL": "🔴", "FILLED": "✅", "FAILED": "❌", "REJECTED": "🚫"}
+    """Send a trade event notification.
+
+    ``status`` is FILLED, PARTIAL (a live order filled in part), UNCONFIRMED (a live
+    order may still be working at the broker), FAILED or REJECTED; ``reason`` says why.
+    """
+    emoji = {"BUY": "🟢", "SELL": "🔴", "FILLED": "✅", "FAILED": "❌", "REJECTED": "🚫",
+             "PARTIAL": "🟡", "UNCONFIRMED": "❓"}
 
     status_emoji = emoji.get(status, "📋")
     action_emoji = emoji.get(action, "📋")
@@ -98,8 +104,34 @@ async def notify_trade_event(
         lines.append(f"Order: {order_id}")
     if pnl:
         lines.append(f"P&L: Rs {pnl:+,.2f}")
+    if reason:
+        lines.append(reason)
 
     await notify("\n".join(lines))
+
+
+async def notify_order_alert(
+    severity: str,
+    title: str,
+    text: str,
+    *,
+    order_ids: Sequence[str] = (),
+) -> None:
+    """Send a CRITICAL/WARNING alert about a live order (from ``OrderAlerter``).
+
+    Used when an order may still be working at the broker, a protective exit did not
+    fill, or a SELL was refused; ``order_ids`` names the orders to check. Never raises.
+    """
+    head = ("🚨 CRITICAL ORDER ALERT" if severity.upper() == "CRITICAL"
+            else "⚠️ WARNING ORDER ALERT")
+    lines = [head, title, text]
+    ids = [i for i in order_ids if i]
+    if ids:
+        lines.append("Orders: " + ", ".join(ids))
+    try:
+        await notify("\n".join(lines))
+    except Exception as exc:
+        logger.warning("Order alert %s not sent: %s", title, exc)
 
 
 async def notify_gtt_event(

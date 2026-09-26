@@ -56,3 +56,26 @@ def _fresh_kill_switch():
     kill_switch._cache = None
     yield
     kill_switch._cache = None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_order_state(tmp_path, monkeypatch):
+    """Live order state stays in the test: the order journal and SELL locks under tmp_path
+    (never ~/.skopaq), and a fresh process-wide alerter (no dedup memory from another test)."""
+    from skopaq.execution import order_alerts
+
+    monkeypatch.setenv("SKOPAQ_ORDER_JOURNAL_DIR", str(tmp_path / "orders"))
+    monkeypatch.setenv("SKOPAQ_ORDER_LOCK_DIR", str(tmp_path / "locks"))
+    order_alerts.reset_alerter()
+    yield
+    order_alerts.reset_alerter()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_order_status_notes():
+    """order_status logs an unrecognised status once per order; no test inherits another's."""
+    from skopaq.broker import order_status
+
+    order_status._noted.clear()
+    yield
+    order_status._noted.clear()
