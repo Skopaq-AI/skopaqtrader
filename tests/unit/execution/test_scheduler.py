@@ -1070,6 +1070,73 @@ def test_a_stop_during_the_recovery_monitor_starts_no_second_one(tmp_path):
     assert state.last_exit("daemon", MONDAY_DATE) == INTERRUPTED_RC
 
 
+def test_a_recovery_monitor_ending_with_positions_left_says_check_the_broker(tmp_path):
+    """rc 4: live `skopaq monitor` ended (after 15:31, or with nothing left to do) with
+    positions still open, a failed exit or an unconfirmed order."""
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, _, clock = _script(("daemon", JobResult(1), "10:00"),
+                               ("monitor", JobResult(4), "15:31"))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    assert len(rec.alerts) == 2
+    assert "rc=4" in rec.alerts[1] and "positions still open" in rec.alerts[1]
+    assert "check open positions at the broker" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) == 4    # done: running it again cannot help
+    lines = "\n".join(describe(settings, _at(MONDAY, "15:35"), state))
+    assert "Today's monitor: started" in lines and "rc=4 (positions left open)" in lines
+
+
+def test_a_recovery_monitor_stopped_after_the_eod_exit_with_positions_left_runs_again(tmp_path):
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    stopped = JobResult(4, stopped=True, stopped_at=_at(MONDAY, "15:25"))
+    runner, _, clock = _script(("daemon", JobResult(1), "10:00"), ("monitor", stopped, "15:26"))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+
+    assert len(rec.alerts) == 2
+    assert "stopped with the scheduler at 15:25 IST and exited rc=4" in rec.alerts[1]
+    assert "positions are still open or an exit failed" in rec.alerts[1]
+    assert "check open positions at the broker" in rec.alerts[1]
+    assert "A scheduler restarted before 15:45 IST runs the monitor again" in rec.alerts[1]
+    assert state.last_exit("monitor", MONDAY_DATE) is None
+
+    again, runs = Recorder(), Runs()
+    _tick_at(settings, SchedulerState(settings.state_dir, settings.log_dir), MONDAY, "15:28",
+             again, runs)
+    assert [args for args, _ in runs.calls] == [["monitor"]]
+
+
+def test_a_recovery_monitor_ending_with_positions_left_before_the_close_runs_again(tmp_path):
+    """rc 4 before 15:30: the market is still open, so it is not final — the monitor runs
+    again at the next tick (its positions still need a stop-loss and the EOD exit)."""
+    settings = _live(tmp_path)
+    state, rec = SchedulerState(settings.state_dir, settings.log_dir), Recorder()
+    runner, calls, clock = _script(("daemon", JobResult(1), "10:00"),
+                                   ("monitor", JobResult(4), "11:00"),
+                                   ("monitor", JobResult(4), "11:02"))
+
+    _tick_session(settings, state, rec, runner, clock, "09:15")
+    assert state.last_exit("monitor", MONDAY_DATE) is None     # not recorded as done
+    assert "rc=4" in rec.alerts[-1] and "running it again" in rec.alerts[-1]
+    assert "check open positions at the broker" in rec.alerts[-1]
+
+    _tick_session(settings, state, rec, runner, clock, "11:01")
+    assert [args[0] for args, _ in calls] == ["daemon", "monitor", "monitor"]
+    assert len(rec.alerts) == 2                                # the retry is not re-alerted
+
+
+def test_the_daemons_rc_labels_are_not_the_monitors(tmp_path):
+    settings = _live(tmp_path)
+    state = SchedulerState(settings.state_dir, settings.log_dir)
+    state.mark_started("daemon", MONDAY_DATE, note="2026-09-28T09:15:02+05:30")
+    state.record_exit("daemon", MONDAY_DATE, 4)
+    lines = "\n".join(describe(settings, _at(MONDAY, "15:35"), state))
+    assert "Today's daemon: started 2026-09-28T09:15:02+05:30, rc=4\n" in lines + "\n"
+
+
 @pytest.mark.parametrize(
     ("day", "hhmm", "checked"),
     [(MONDAY, "08:44", False), (MONDAY, "08:45", True), (MONDAY, "09:16", False),

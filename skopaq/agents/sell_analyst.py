@@ -25,6 +25,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -194,8 +195,11 @@ async def _invoke_sell_analyst(
         )
     ]
 
-    # Invoke — may trigger tool calls; if so, we need to execute them
-    result = chain.invoke({"messages": messages})
+    # Invoke — may trigger tool calls; if so, we need to execute them. The chain and the
+    # tools are synchronous (an LLM round trip, yfinance downloads): they run in a worker
+    # thread so the event loop keeps going meanwhile (the position monitor's stop-losses
+    # and exits, a SIGTERM handler)
+    result = await _in_thread(chain.invoke, {"messages": messages})
 
     # If the LLM requested tool calls, execute them and re-invoke
     max_tool_rounds = 3
@@ -212,7 +216,7 @@ async def _invoke_sell_analyst(
             if tool_fn is None:
                 continue
             try:
-                tool_result = tool_fn.invoke(tool_call["args"])
+                tool_result = await _in_thread(tool_fn.invoke, tool_call["args"])
             except Exception as exc:
                 tool_result = f"Tool error: {exc}"
 
@@ -222,11 +226,25 @@ async def _invoke_sell_analyst(
             )
 
         messages.extend(tool_messages)
-        result = chain.invoke({"messages": messages})
+        result = await _in_thread(chain.invoke, {"messages": messages})
 
     # Parse the final text response
     content = extract_text(result.content) if result.content else ""
     return await _decide_with_jev(_parse_decision(content), content, jev)
+
+
+async def _in_thread(fn, *args):
+    """``fn(*args)`` in a worker thread. A StopIteration it raises becomes a RuntimeError:
+    asyncio cannot set a StopIteration on a Future, so the await would never finish (and
+    the position monitor's loop would hang on it) instead of falling back to HOLD."""
+    return await asyncio.to_thread(_no_stopiteration, fn, *args)
+
+
+def _no_stopiteration(fn, *args):
+    try:
+        return fn(*args)
+    except StopIteration as exc:
+        raise RuntimeError(f"{getattr(fn, '__qualname__', fn)!s} raised StopIteration") from exc
 
 
 async def _decide_with_jev(decision: SellDecision, analysis: str, jev=None) -> SellDecision:

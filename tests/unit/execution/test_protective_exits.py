@@ -13,7 +13,7 @@ Two defects kept them from it:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -203,15 +203,28 @@ def test_build_order():
     assert (unpriced.order_type, unpriced.price) == (OrderType.MARKET, None)
 
 
+def _mock_live_router(positions, holdings) -> MagicMock:
+    """A live router mock: a SELL's positions and holdings come from ``sell_inputs``
+    (read book-first, with an empty order book here), under no lock."""
+    from skopaq.execution.order_router import SellInputs
+    from skopaq.execution.sellable import SellContext
+
+    router = MagicMock(mode="live")
+    router.sell_lock = MagicMock(return_value=None)
+    router.sell_inputs = AsyncMock(return_value=SellInputs(
+        positions=positions, holdings=holdings,
+        context=SellContext(orders=(), read_at=datetime(2026, 9, 25, 11, 0,
+                                                        tzinfo=timezone.utc))))
+    router.get_funds = AsyncMock(return_value=FUNDS)
+    return router
+
+
 @pytest.mark.asyncio
 async def test_exit_pnl_uses_the_holding_cost_when_there_is_no_position():
     """Live: shares bought on an earlier day are delivery holdings, not positions."""
     safety = SafetyChecker(rules=SafetyRules(market_hours_only=False, require_stop_loss=False))
-    router = MagicMock(mode="live")
-    router.get_positions = AsyncMock(return_value=[])
-    router.get_settled_holdings = AsyncMock(return_value=[
+    router = _mock_live_router(positions=[], holdings=[
         Holding(symbol="TCS", quantity=Decimal(5), average_price=100.0)])
-    router.get_funds = AsyncMock(return_value=FUNDS)
     router.execute = AsyncMock(side_effect=lambda order, signal: MagicMock(
         success=True, fill_price=signal.entry_price, order=None, rejection_reason=""))
 
@@ -227,12 +240,9 @@ async def test_exit_pnl_skips_a_position_row_with_no_long_quantity(today):
     """Live day 2+: shares sold earlier today leave a net-negative (or flat) position
     at the sale price; the holding keeps the cost the rest is measured against."""
     safety = SafetyChecker(rules=SafetyRules(market_hours_only=False, require_stop_loss=False))
-    router = MagicMock(mode="live")
-    router.get_positions = AsyncMock(return_value=[
-        Position(symbol="TCS", quantity=today, average_price=80.0)])
-    router.get_settled_holdings = AsyncMock(return_value=[
-        Holding(symbol="TCS", quantity=Decimal(10), average_price=100.0)])
-    router.get_funds = AsyncMock(return_value=FUNDS)
+    router = _mock_live_router(
+        positions=[Position(symbol="TCS", quantity=today, average_price=80.0)],
+        holdings=[Holding(symbol="TCS", quantity=Decimal(10), average_price=100.0)])
     router.execute = AsyncMock(side_effect=lambda order, signal: MagicMock(
         success=True, fill_price=signal.entry_price, order=None, rejection_reason=""))
 
@@ -243,23 +253,51 @@ async def test_exit_pnl_skips_a_position_row_with_no_long_quantity(today):
     assert safety._day_pnl == pytest.approx((94 - 100) * held_after_today)
 
 
-# ── Live router: fill estimate for a MARKET order ────────────────────────────
+# ── Live router: the fill price of a MARKET order ────────────────────────────
+
+
+def _filled_live_client(qty: int, price: str) -> AsyncMock:
+    """A live client whose order is SUCCESS on the first read (qty at price)."""
+    live = AsyncMock()
+    live.place_order = AsyncMock(return_value=OrderResponse(
+        order_id="EQ-1", status="INITIATED", message=""))
+    live.get_order = AsyncMock(return_value={
+        "id": "EQ-1", "status": "SUCCESS", "txn_type": "SELL", "requested_qty": qty,
+        "traded_qty": qty, "traded_price": price})
+    live.get_order_book = AsyncMock(return_value=[])
+    live.get_trades = AsyncMock(return_value=[])
+    return live
+
+
+def _live_router(live) -> OrderRouter:
+    # A fixed wall clock: nothing is placed after 15:29:55 IST
+    wall = lambda: datetime(2026, 9, 25, 11, 0, tzinfo=timezone(timedelta(hours=5, minutes=30)))  # noqa: E731
+    return OrderRouter(MagicMock(trading_mode="live"), PaperEngine(), live_client=live, wall=wall)
 
 
 @pytest.mark.asyncio
-async def test_live_market_sell_reports_the_reference_price():
-    live = AsyncMock()
-    live.place_order = AsyncMock(return_value=OrderResponse(
-        order_id="ORD1", status="PENDING", message="OK"))
-    router = OrderRouter(MagicMock(trading_mode="live"), PaperEngine(), live_client=live)
+async def test_live_market_sell_reports_the_broker_fill():
+    live = _filled_live_client(5, "93.80")
     order = OrderRequest(symbol="TCS", side=Side.SELL, quantity=Decimal(5),
                          order_type=OrderType.MARKET, security_id="11536")
 
-    result = await router.execute(order, _exit("TCS", 94, 5))
+    result = await _live_router(live).execute(order, _exit("TCS", 94, 5))
 
     payload_order = live.place_order.await_args.args[0]
     assert payload_order.order_type == OrderType.MARKET and payload_order.price is None
-    assert result.fill_price == 94  # estimate: the LTP the exit was decided at
+    assert (result.fill_price, result.fill_price_source) == (93.8, "order")
+
+
+@pytest.mark.asyncio
+async def test_live_market_sell_without_a_broker_price_uses_the_reference_price():
+    live = _filled_live_client(5, "")
+    order = OrderRequest(symbol="TCS", side=Side.SELL, quantity=Decimal(5),
+                         order_type=OrderType.MARKET, security_id="11536")
+
+    result = await _live_router(live).execute(order, _exit("TCS", 94, 5))
+
+    assert result.success
+    assert (result.fill_price, result.fill_price_source) == (94, "estimate")
 
 
 # ── Callers ──────────────────────────────────────────────────────────────────
@@ -309,20 +347,18 @@ async def test_daemon_close_without_a_price_does_not_invent_breakeven():
 
 
 @pytest.mark.asyncio
-async def test_live_close_records_the_loss_at_the_ltp():
+async def test_live_close_records_the_loss_at_the_broker_fill():
     """Daemon CLOSE → Executor → live router: the loss reaches the safety checker."""
     from skopaq.execution.daemon import TradingDaemon
 
     safety = SafetyChecker(rules=SafetyRules(market_hours_only=False, require_stop_loss=False))
-    live = AsyncMock()
-    live.place_order = AsyncMock(return_value=OrderResponse(
-        order_id="ORD1", status="PENDING", message="OK"))
+    live = _filled_live_client(3, "3790")
     live.get_ltp = AsyncMock(return_value=3800.0)
     positions = [Position(**{"symbol": "TCS", "net_qty": "3", "avg_price": 4000.0})]
     live.get_positions = AsyncMock(return_value=positions)
     live.get_holdings = AsyncMock(return_value=[])
     live.get_funds = AsyncMock(return_value=FUNDS)
-    router = OrderRouter(MagicMock(trading_mode="live"), PaperEngine(), live_client=live)
+    router = _live_router(live)
 
     daemon = TradingDaemon(MagicMock(trading_mode="live"))
     daemon._client, daemon._router, daemon._executor = live, router, Executor(router, safety)
@@ -334,5 +370,5 @@ async def test_live_close_records_the_loss_at_the_ltp():
 
     signal, execution = record.await_args.args
     assert live.place_order.await_args.args[0].order_type == OrderType.MARKET
-    assert execution.fill_price == 3800.0
-    assert safety._day_pnl == pytest.approx(-600.0)
+    assert execution.fill_price == 3790.0      # the broker's fill, not the LTP
+    assert safety._day_pnl == pytest.approx(-630.0)

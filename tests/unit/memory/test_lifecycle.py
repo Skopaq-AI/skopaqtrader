@@ -536,3 +536,351 @@ class TestSignalTracker:
         monkeypatch.setattr("skopaq.learning.tracker.record_signal", broken)
         await lifecycle.on_trade(_make_sell_result())
         graph.reflect.assert_called_once()
+
+
+# ── Live SELLs: only the filled quantity closes BUY rows ─────────────────────
+
+
+OPENED = datetime(2026, 9, 25, 4, 0, tzinfo=timezone.utc)
+
+
+def _live_sell(filled: int, price: float = 2700.0, trade_id=None) -> AnalysisResult:
+    return AnalysisResult(
+        symbol="RELIANCE", trade_date="2026-09-25",
+        signal=TradingSignal(symbol="RELIANCE", exchange=Exchange.NSE, action="SELL",
+                             confidence=80, entry_price=price),
+        execution=ExecutionResult(success=True, fill_price=price, mode="live",
+                                  filled_quantity=Decimal(filled),
+                                  requested_quantity=Decimal(filled), outcome="filled"),
+        trade_id=trade_id,
+    )
+
+
+def _open_row(quantity: int, **kw) -> TradeRecord:
+    kw.setdefault("created_at", OPENED)
+    return TradeRecord(id=uuid4(), symbol="RELIANCE", exchange="NSE", side="BUY",
+                       quantity=quantity, price=Decimal("2500.00"),
+                       fill_price=Decimal("2500.00"), status="COMPLETE", is_paper=False, **kw)
+
+
+def _closing_updates(repo, trade_id) -> list[dict]:
+    return [c.args[1] for c in repo.update.call_args_list
+            if c.args[0] == trade_id and "closed_at" in c.args[1]]
+
+
+@pytest.fixture
+def order_alerts_spy(monkeypatch):
+    from skopaq.execution import order_alerts
+    from tests.unit.execution._fakes import AlertSpy
+
+    spy = AlertSpy()
+    monkeypatch.setattr(order_alerts, "_alerter", spy)
+    return spy
+
+
+class TestLiveSell:
+    @pytest.mark.asyncio
+    async def test_a_partial_exit_saves_the_remainder_before_closing_the_row(self, graph):  # T14
+        calls = MagicMock()
+        repo = calls.repo
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+        repo.insert.side_effect = lambda record: record
+
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(3))
+
+        names = [c[0] for c in calls.mock_calls if c[0] in ("repo.insert", "repo.update")]
+        assert names[:2] == ["repo.insert", "repo.update"]      # remainder first
+        remainder = repo.insert.call_args.args[0]
+        assert (remainder.quantity, remainder.order_id, remainder.closed_at) == (7, None, None)
+        assert remainder.pnl is None and remainder.is_paper is False
+        assert remainder.model_signals["split_from"] == str(open_buy.id)
+        assert remainder.model_signals["opened_at"] == OPENED.isoformat()
+        assert remainder.entry_reason == f"Remainder of {open_buy.id} after a partial exit"
+        [closed] = _closing_updates(repo, open_buy.id)
+        assert closed["quantity"] == "3" and closed["pnl"] == "600.00"   # (2700-2500) x 3
+        assert closed["exit_reason"] == "Partial exit: sold 3 of 10"
+        assert "600.00" in graph.reflect.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_split_keeps_the_row_open_and_the_next_exit_counts_it(  # T21
+            self, graph, order_alerts_spy):
+        repo = MagicMock()
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+        repo.insert.side_effect = RuntimeError("supabase down")
+
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(3))
+
+        assert _closing_updates(repo, open_buy.id) == []        # not closed
+        [kept] = [c.args[1] for c in repo.update.call_args_list if c.args[0] == open_buy.id]
+        [partial] = kept["model_signals"]["pending_partials"]
+        assert (partial["qty"], partial["pnl"], partial["sell_price"]) == ("3", "600.00", "2700.0")
+        assert order_alerts_spy.keys("WARNING") == [f"partial-not-split:{open_buy.id}"]
+
+        # The rest (7) is sold later at 2600: the row closes with both parts' P&L
+        repo.reset_mock()
+        repo.find_open_buy.return_value = _open_row(
+            10, model_signals={"pending_partials": [partial]})
+        repo.find_open_buy.return_value.id = open_buy.id
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(7, price=2600.0))
+
+        [closed] = _closing_updates(repo, open_buy.id)
+        assert closed["pnl"] == "1300.00"                        # 100 x 7 + 600
+        repo.insert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_sell_closes_several_lots_newest_first(self, graph):   # T22
+        repo = MagicMock()
+        newer, older = _open_row(5), _open_row(10)
+        repo.find_open_buy.side_effect = [newer, older]
+        repo.insert.side_effect = lambda record: record
+        sell_id = uuid4()
+
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(12, trade_id=sell_id))
+
+        [first] = _closing_updates(repo, newer.id)
+        assert first["pnl"] == "1000.00" and "quantity" not in first    # all 5
+        [second] = _closing_updates(repo, older.id)
+        assert second["quantity"] == "7" and second["pnl"] == "1400.00"
+        assert repo.insert.call_args.args[0].quantity == 3              # 3 of the older left
+        [link] = [c.args[1] for c in repo.update.call_args_list if c.args[0] == sell_id]
+        assert link["opening_trade_id"] == str(newer.id) and link["pnl"] == "2400.00"
+        graph.reflect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_full_live_exit_closes_the_row_as_before(self, graph):   # T23
+        repo = MagicMock()
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(10))
+
+        [closed] = _closing_updates(repo, open_buy.id)
+        assert set(closed) == {"closed_at", "pnl", "exit_reason"}
+        assert closed["pnl"] == "2000.00" and closed["exit_reason"] == "Closed by SELL (P&L: 8.00%)"
+        repo.insert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_live_sell_whose_rows_cannot_be_read_is_not_booked(self, graph):
+        repo = MagicMock()
+        repo.find_open_buy.side_effect = RuntimeError("503 Service Unavailable")
+
+        assert await TradeLifecycleManager(repo, graph).on_trade(_live_sell(8)) is False
+        repo.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_read_failing_after_a_row_was_closed_is_alerted(self, graph,
+                                                                   order_alerts_spy):
+        """Booking the SELL again would close the first row twice: it counts as booked,
+        and the shares left unbooked are alerted."""
+        repo = MagicMock()
+        first = _open_row(5)
+        repo.find_open_buy.side_effect = [first, RuntimeError("503 Service Unavailable")]
+
+        assert await TradeLifecycleManager(repo, graph).on_trade(_live_sell(8)) is True
+        assert len(_closing_updates(repo, first.id)) == 1
+        assert "3 sold share(s) not booked" in order_alerts_spy.text(
+            "sell-not-booked:RELIANCE")
+
+    @pytest.mark.asyncio
+    async def test_selling_more_than_the_open_rows_hold_is_logged(self, graph, caplog):
+        repo = MagicMock()
+        repo.find_open_buy.side_effect = [_open_row(5), None]
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(8))
+        assert any("3 more than the open BUY rows hold" in r.getMessage()
+                   for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_live_sell_closes_live_rows_only(self, graph):
+        """A newer open paper row (`skopaq trade --paper`) is never closed by a live exit:
+        its P&L would land on the paper side, out of the live loss limits."""
+        live_row = _open_row(10)
+        paper_row = _open_row(5).model_copy(update={
+            "is_paper": True, "price": Decimal("2000.00"), "fill_price": Decimal("2000.00")})
+        closed: set = set()
+
+        def find_open_buy(symbol, is_paper=None):
+            rows = [paper_row, live_row]                  # newest first
+            return next((r for r in rows if r.id not in closed
+                         and (is_paper is None or r.is_paper is is_paper)), None)
+
+        def update(trade_id, fields):
+            if "closed_at" in fields:
+                closed.add(trade_id)
+
+        repo = MagicMock()
+        repo.find_open_buy.side_effect = find_open_buy
+        repo.update.side_effect = update
+        repo.insert.side_effect = lambda record: record
+
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(10))
+
+        assert _closing_updates(repo, paper_row.id) == []
+        [row] = _closing_updates(repo, live_row.id)
+        assert row["pnl"] == "2000.00"                   # (2700 - 2500) x 10
+
+    @pytest.mark.asyncio
+    async def test_a_paper_sell_closes_the_whole_row_as_before(self, graph):   # T24
+        repo = MagicMock()
+        open_buy = _make_open_buy_record(quantity=10)
+        repo.find_open_buy.return_value = open_buy
+        result = _make_sell_result(fill_price=2700.0)
+        result.signal.quantity = Decimal(3)          # paper: the whole BUY row closes
+
+        await TradeLifecycleManager(repo, graph).on_trade(result)
+
+        [closed] = _closing_updates(repo, open_buy.id)
+        assert closed["pnl"] == "2000.00"
+        repo.insert.assert_not_called()
+
+
+class TestLiveSellReviewFixes:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("execution", [
+        # refused before the broker: safety, the lock, the router's own failure
+        ExecutionResult(success=False, mode="live", safety_passed=False,
+                        rejection_reason="Cannot read the broker's order book (HTTP 503)"),
+        ExecutionResult(success=False, mode="live",
+                        rejection_reason="Another Skopaq process is already selling"),
+        ExecutionResult(success=False, mode="live", rejection_reason="Broker error: down"),
+        # reached the broker but nothing (or nothing known) filled
+        ExecutionResult(success=False, mode="live", filled_quantity=Decimal(0),
+                        outcome="cancelled"),
+        ExecutionResult(success=True, mode="live", fill_price=80.0),   # no confirmed quantity
+    ])
+    async def test_a_live_sell_that_sold_nothing_closes_no_row(self, graph, execution):
+        repo = MagicMock()
+        open_buy = _open_row(5)
+        repo.find_open_buy.return_value = open_buy
+        result = AnalysisResult(
+            symbol="RELIANCE", trade_date="2026-09-25",
+            signal=TradingSignal(symbol="RELIANCE", exchange=Exchange.NSE, action="SELL",
+                                 confidence=80, entry_price=80.0),
+            execution=execution)
+
+        await TradeLifecycleManager(repo, graph).on_trade(result)
+
+        assert _closing_updates(repo, open_buy.id) == []
+        repo.insert.assert_not_called()
+        graph.reflect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_refused_sell_through_run_lifecycle_leaves_the_buy_open(self, graph):
+        from skopaq.cli.main import _run_lifecycle
+
+        repo = MagicMock()
+        open_buy = _open_row(5)
+        repo.find_open_buy.return_value = open_buy
+        config = MagicMock(supabase_url="https://x.supabase.co", asset_class="equity",
+                           reflection_enabled=False)
+        config.supabase_service_key.get_secret_value.return_value = "k"
+        refused = AnalysisResult(
+            symbol="RELIANCE", trade_date="2026-09-25",
+            signal=TradingSignal(symbol="RELIANCE", exchange=Exchange.NSE, action="SELL",
+                                 confidence=80, entry_price=80.0, quantity=Decimal(5)),
+            execution=ExecutionResult(success=False, mode="live", safety_passed=False,
+                                      rejection_reason="Cannot read the broker's order book"))
+        with patch("supabase.create_client", return_value=MagicMock()), \
+             patch("skopaq.db.repositories.TradeRepository", return_value=repo):
+            await _run_lifecycle(config, None, None, refused)
+
+        assert _closing_updates(repo, open_buy.id) == []
+
+    @pytest.mark.asyncio
+    async def test_a_kept_partial_is_tracked_and_reflected_once(self, graph, monkeypatch):
+        recorded = []
+        monkeypatch.setattr("skopaq.learning.tracker.record_signal",
+                            lambda rec: recorded.append(rec.pnl))
+        repo = MagicMock()
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+        repo.insert.side_effect = RuntimeError("supabase down")
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(3))      # +600
+        [kept] = [c.args[1] for c in repo.update.call_args_list if c.args[0] == open_buy.id]
+        partial = kept["model_signals"]["pending_partials"][0]
+
+        repo.reset_mock()
+        again = _open_row(10, model_signals={"pending_partials": [partial]})
+        again.id = open_buy.id
+        repo.find_open_buy.return_value = again
+        sell_id = uuid4()
+        await TradeLifecycleManager(repo, graph).on_trade(
+            _live_sell(7, price=2600.0, trade_id=sell_id))                     # +700
+
+        assert recorded == [600.0, 700.0]                  # the position's P&L is 1300
+        reflected = [c.args[0].split("Realized P&L: ")[1].split(" ")[0]
+                     for c in graph.reflect.call_args_list]
+        assert reflected == ["600.00", "700.00"]
+        [closed] = _closing_updates(repo, open_buy.id)
+        assert closed["pnl"] == "1300.00"                  # the BUY row books both parts
+        [link] = [c.args[1] for c in repo.update.call_args_list if c.args[0] == sell_id]
+        assert link["pnl"] == "700.00"                     # this SELL's own P&L
+
+    @pytest.mark.asyncio
+    async def test_a_saved_remainder_is_undone_when_the_row_cannot_be_closed(
+            self, graph, order_alerts_spy):
+        repo = MagicMock()
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+        remainder_id = uuid4()
+
+        def insert(record):
+            return record.model_copy(update={"id": remainder_id})
+
+        def update(trade_id, fields):
+            if "closed_at" in fields:
+                raise RuntimeError("HTTP 503 from Supabase")
+
+        repo.insert.side_effect = insert
+        repo.update.side_effect = update
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(3))
+
+        assert len(_closing_updates(repo, open_buy.id)) == 2   # tried twice
+        repo.delete.assert_called_once_with(remainder_id)      # no duplicated open shares
+        assert f"partial-not-split:{open_buy.id}" in order_alerts_spy.keys()
+
+    @pytest.mark.asyncio
+    async def test_a_retried_close_needs_no_undo(self, graph):
+        repo = MagicMock()
+        open_buy = _open_row(10)
+        repo.find_open_buy.return_value = open_buy
+        repo.insert.side_effect = lambda record: record
+        failures = iter([RuntimeError("HTTP 503")])
+
+        def update(trade_id, fields):
+            if "closed_at" in fields:
+                error = next(failures, None)
+                if error:
+                    raise error
+
+        repo.update.side_effect = update
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(3))
+
+        assert len(_closing_updates(repo, open_buy.id)) == 2
+        repo.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_row_that_could_not_be_closed_is_never_closed_twice(
+            self, graph, order_alerts_spy):
+        newer, older = _open_row(5), _open_row(10)
+        closed = set()
+        repo = MagicMock()
+
+        def find_open_buy(symbol, is_paper=None):
+            return next((r for r in (newer, older) if r.id not in closed), None)
+
+        def update(trade_id, fields):
+            if "closed_at" in fields:
+                if trade_id == newer.id:
+                    raise RuntimeError("HTTP 503 from Supabase")
+                closed.add(trade_id)
+
+        repo.find_open_buy.side_effect = find_open_buy
+        repo.update.side_effect = update
+        repo.insert.side_effect = lambda record: record
+        await TradeLifecycleManager(repo, graph).on_trade(_live_sell(12))
+
+        assert _closing_updates(repo, older.id) == []      # not given the newer row's shares
+        repo.insert.assert_not_called()
+        assert [k for k in order_alerts_spy.keys() if k.startswith("sell-not-booked:")]

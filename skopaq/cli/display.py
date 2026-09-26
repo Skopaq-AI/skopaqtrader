@@ -296,18 +296,37 @@ def display_trade_result(result: AnalysisResult) -> None:
     table.add_column("Field", style="bold", width=14)
     table.add_column("Value")
 
+    from skopaq.broker.models import fill_status_of, filled_quantity_of, order_ids_of
+
+    status = fill_status_of(ex)
     if ex.success:
-        table.add_row("Status", f"{OK}  [bold green]FILLED[/bold green]")
+        if status == "PARTIAL":
+            # A live order the broker filled in part: only the filled shares count
+            table.add_row("Status", f"{WARN}  [bold yellow]PARTIAL[/bold yellow]")
+            requested = ex.requested_quantity if ex.requested_quantity is not None else "?"
+            table.add_row("Filled", f"{filled_quantity_of(ex, 0)} of {requested}")
+        else:
+            table.add_row("Status", f"{OK}  [bold green]FILLED[/bold green]")
         table.add_row("Mode", ex.mode.upper())
         if ex.fill_price is not None:
             table.add_row("Fill Price", f"\u20b9 {ex.fill_price:,.2f}")
         table.add_row("Slippage", f"{ex.slippage:.4f}")
         table.add_row("Brokerage", f"\u20b9 {ex.brokerage:.2f}")
-        border = STATUS_BORDER
+        if status == "PARTIAL" and ex.broker_message:
+            table.add_row("Note", f"[yellow]{ex.broker_message}[/yellow]")
+        border = WARNING_BORDER if status == "PARTIAL" else STATUS_BORDER
+    elif status == "UNCONFIRMED":
+        # A live order that may still be working at the broker: check it there
+        table.add_row("Status", f"{WARN}  [bold yellow]UNCONFIRMED[/bold yellow]")
+        table.add_row("Reason", f"[yellow]{ex.rejection_reason}[/yellow]")
+        border = WARNING_BORDER
     else:
         table.add_row("Status", f"{FAIL}  [bold red]REJECTED[/bold red]")
         table.add_row("Reason", f"[red]{ex.rejection_reason}[/red]")
         border = ERROR_BORDER
+    order_ids = order_ids_of(ex)
+    if order_ids:
+        table.add_row("Orders", ", ".join(order_ids))
 
     panel = Panel(
         table,
@@ -677,7 +696,21 @@ def display_monitor_result(result: MonitorResult) -> None:
     for reason in result.exit_reasons:
         table.add_row("Exit", f"[{DIM}]{reason}[/{DIM}]")
 
-    border = STATUS_BORDER if result.sells_failed == 0 else WARNING_BORDER
+    # Live: what the monitor leaves open (`skopaq monitor` then exits 4)
+    if result.late_fills:
+        table.add_row("Late Fills", str(result.late_fills))
+    if result.exits_blocked:
+        table.add_row("Exits Blocked", f"[{ERROR}]{', '.join(result.exits_blocked)}[/{ERROR}]")
+    if result.positions_left:
+        table.add_row("Still Open", f"[{ERROR}]{', '.join(result.positions_left)}[/{ERROR}]")
+    if result.orders_unconfirmed:
+        table.add_row(
+            "Unconfirmed",
+            f"[{ERROR}]{', '.join(result.orders_unconfirmed)} — check the broker[/{ERROR}]",
+        )
+
+    left_open = result.positions_left or result.orders_unconfirmed
+    border = STATUS_BORDER if result.sells_failed == 0 and not left_open else WARNING_BORDER
     panel = Panel(
         table,
         title="[bold]Monitor Summary[/bold]",
@@ -767,6 +800,17 @@ def display_daemon_report(report: DaemonSessionReport) -> None:
         "Gross P&L",
         f"[{pnl_style}]{report.gross_pnl:,.2f}[/{pnl_style}]",
     )
+
+    # Live: what the session could not confirm or close
+    if report.orders_unconfirmed:
+        table.add_row("Unconfirmed Orders", f"[{ERROR}]{report.orders_unconfirmed}[/{ERROR}]")
+    if report.exits_blocked:
+        table.add_row("Exits Blocked", f"[{ERROR}]{', '.join(report.exits_blocked)}[/{ERROR}]")
+    if report.positions_left:
+        table.add_row(
+            "Positions Left",
+            f"[{ERROR}]{', '.join(report.positions_left)} — check the broker[/{ERROR}]",
+        )
 
     # Phase timings
     if report.phase_times:

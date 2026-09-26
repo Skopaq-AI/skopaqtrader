@@ -18,8 +18,9 @@ Replaces Railway's cron on a single always-on host (the docker compose
   INDstocks token is missing or expires before the session would end.
 - Interrupted sessions: a session that was started but has no exit code (the
   host or container died mid-session) is alerted once. In live mode, before the
-  deadline, ``skopaq monitor`` then runs until the deadline, so the open
-  positions still get their stop-loss and the 15:20 EOD exit. The same happens
+  deadline, ``skopaq monitor`` then runs until nothing is held or open, or 15:31
+  IST (exiting 4 if positions remain), so the open positions still get their
+  stop-loss and the 15:20 EOD exit. The same happens
   when the session exits non-zero on its own (an exception, or OOM/SIGKILL)
   while the scheduler keeps running, and after a restart when a scheduler stop
   had to SIGKILL the session (CLOSING may not have finished).
@@ -65,7 +66,7 @@ from typing import Callable, Optional
 from pydantic import TypeAdapter, ValidationError
 
 from skopaq.constants import NSE_MARKET_CLOSE
-from skopaq.execution.daemon import PRE_OPEN_FAILED_EXIT_CODE
+from skopaq.execution.daemon import POSITIONS_LEFT_EXIT_CODE, PRE_OPEN_FAILED_EXIT_CODE
 from skopaq.risk.calendar import (
     IST,
     NSE_TRADING_HOLIDAYS,
@@ -84,9 +85,15 @@ INTERRUPTED_RC = -1
 _INTERRUPTED_LOOKBACK_DAYS = 7
 # A session whose PRE_OPEN failed (nothing traded) is started again this often until LAST_START.
 PRE_OPEN_RETRY = timedelta(minutes=5)
+# A recovery monitor that ends at once with rc 4 before the close is run again only this
+# much later (a state that persists would otherwise start one every tick)
+MONITOR_RERUN_BACKOFF = timedelta(minutes=5)
+_QUICK_RUN = timedelta(seconds=60)
 # Live session that ended without managing its positions, too late for the recovery monitor.
 _CHECK_THE_BROKER = ("LIVE: check open positions at the broker now; delivery (CNC) positions "
                      "are carried overnight and nothing is managing them.")
+# How long a live recovery `skopaq monitor` runs (the deadline only stops one still running)
+_MONITOR_UNTIL = "until nothing is held or open, or 15:31 IST (it exits 4 if positions remain)"
 _LOCK_FILE = "scheduler.lock"
 # What pydantic accepts for a bool; the scheduler settings are plain str (see config.py).
 _TRUE = frozenset({"1", "on", "t", "true", "y", "yes"})
@@ -259,6 +266,7 @@ class SchedulerState:
         self.state_dir = Path(state_dir)
         self.log_dir = Path(log_dir) if log_dir is not None else None
         self._noted: set[tuple[str, date]] = set()
+        self._not_before: dict[tuple[str, date], datetime] = {}
 
     def _path(self, name: str, day: date, suffix: str) -> Path:
         return self.state_dir / f"{name}-{day.isoformat()}.{suffix}"
@@ -320,6 +328,14 @@ class SchedulerState:
             return False
         self._noted.add((key, day))
         return True
+
+    def defer(self, job: str, day: date, until: datetime) -> None:
+        """Do not run *job* for *day* again before *until* (this process only)."""
+        self._not_before[(job, day)] = until
+
+    def deferred(self, job: str, day: date, now: datetime) -> bool:
+        until = self._not_before.get((job, day))
+        return until is not None and now < until
 
     def prune(self, today: date, keep_days: int = 30) -> None:
         """Delete markers older than *keep_days*, and session logs older than 60 days."""
@@ -817,7 +833,7 @@ def _tick(now, settings, state, *, runner, alert, ping, stop, clock) -> None:
                 f"daemon session of {day} did not stop within {settings.kill_after_seconds}s "
                 f"of the scheduler's SIGTERM and was killed (rc={result.rc}): CLOSING may not "
                 f"have finished. {_CHECK_THE_BROKER} A scheduler restarted before "
-                f"{settings.deadline:%H:%M} IST runs `skopaq monitor` until then."
+                f"{settings.deadline:%H:%M} IST runs `skopaq monitor` {_MONITOR_UNTIL}."
             )
             return
         state.record_exit("daemon", day, result.rc)
@@ -882,9 +898,10 @@ def _unconfirmed_live(settings) -> str:
 def _recover_interrupted(day, now, settings, state, *, runner, alert, stop, clock) -> None:
     """Handle a daemon session on *day* that started but never finished (host/container died).
 
-    Alerts once. In live mode, today, before the deadline: runs ``skopaq monitor`` until the
-    deadline so the open (CNC, carried overnight otherwise) positions still get their
-    stop-loss and EOD exit. Paper positions lived in the dead process's memory.
+    Alerts once. In live mode, today, before the deadline: runs ``skopaq monitor`` (until
+    nothing is held or open, or 15:31 IST) so the open (CNC, carried overnight otherwise)
+    positions still get their stop-loss and EOD exit. Paper positions lived in the dead
+    process's memory.
     """
     state.record_exit("daemon", day, INTERRUPTED_RC)  # handled once, even across restarts
     started = state.started_note("daemon", day) or "?"
@@ -898,8 +915,8 @@ def _recover_interrupted(day, now, settings, state, *, runner, alert, stop, cloc
     if day != today or now.time() >= settings.deadline:
         alert(f"{what}. {_CHECK_THE_BROKER}")
         return
-    alert(f"{what}. LIVE: running `skopaq monitor` until {settings.deadline:%H:%M} IST so "
-          "the open positions keep their stop-loss and the EOD exit.")
+    alert(f"{what}. LIVE: running `skopaq monitor` {_MONITOR_UNTIL} so the open positions "
+          "keep their stop-loss and the EOD exit.")
     _run_recovery_monitor(day, now, settings, state, runner=runner, alert=alert, stop=stop,
                           clock=clock)
 
@@ -908,8 +925,9 @@ def _recover_failed(day, rc, settings, state, *, runner, alert, stop, clock) -> 
     """Handle today's daemon session exiting non-zero on its own (not the deadline, not a
     scheduler stop): an exception that skipped CLOSING, or OOM/SIGKILL (rc < 0).
 
-    In live mode, before the deadline: runs ``skopaq monitor`` until the deadline, as for
-    an interrupted session. Paper positions lived in the dead process's memory.
+    In live mode, before the deadline: runs ``skopaq monitor`` (until nothing is held or
+    open, or 15:31 IST), as for an interrupted session. Paper positions lived in the dead
+    process's memory.
     """
     what = f"daemon exited rc={rc} on {day}"
     if not (settings.mode == "live" and settings.confirm_live):
@@ -921,8 +939,8 @@ def _recover_failed(day, rc, settings, state, *, runner, alert, stop, clock) -> 
         alert(f"{what}. {_CHECK_THE_BROKER}")
         return
     alert(f"{what} before the {settings.deadline:%H:%M} deadline. LIVE: running `skopaq "
-          f"monitor` until {settings.deadline:%H:%M} IST so any open positions keep their "
-          "stop-loss and the EOD exit.")
+          f"monitor` {_MONITOR_UNTIL} so any open positions keep their stop-loss and the "
+          "EOD exit.")
     _run_recovery_monitor(day, now, settings, state, runner=runner, alert=alert, stop=stop,
                           clock=clock)
 
@@ -943,21 +961,31 @@ def _resume_recovery_monitor(day, now, settings, state, *, runner, alert, stop, 
         state.record_exit("monitor", day, INTERRUPTED_RC)  # handled once, even across restarts
         alert(f"{what}. {_CHECK_THE_BROKER}")
         return
+    if state.deferred("monitor", day, now):  # it just ended at once with rc 4: wait a bit
+        return
     if state.once_this_process("monitor", day):  # False: this process already tried it
-        alert(f"{what}. LIVE: running it again until {settings.deadline:%H:%M} IST so the open "
-              "positions keep their stop-loss and the EOD exit.")
+        alert(f"{what}. LIVE: running it again {_MONITOR_UNTIL} so the open positions keep "
+              "their stop-loss and the EOD exit.")
     _run_recovery_monitor(day, now, settings, state, runner=runner, alert=alert, stop=stop,
                           clock=clock)
 
 
 def _run_recovery_monitor(day, now, settings, state, *, runner, alert, stop, clock) -> None:
-    """Live ``skopaq monitor`` until the deadline, logged to the day's session log.
+    """Live ``skopaq monitor`` (at most until the deadline), logged to the day's session log.
 
     Its exit code is recorded when it ends on its own, at the deadline, or cleanly (rc 0) on
     a scheduler stop from the EOD exit on (its shutdown then sells what is left). Stopped
     earlier, or not cleanly, it gets none, like a monitor whose scheduler died, so the next
     scheduler process runs it again (``_resume_recovery_monitor``). One that cannot be run
     (the launch fails) gets none either: the next tick retries it.
+
+    Live, the monitor ends by itself once nothing is held or open, or shortly after the
+    close (15:31 IST), and exits ``POSITIONS_LEFT_EXIT_CODE`` (4) when positions are still
+    open, an exit failed or an order is unconfirmed: that is alerted as "check the broker".
+    Ending with rc 4 before 15:30 (the market is still open) or stopped with it, it gets no
+    exit code either, so it runs again (at the next tick, or after a restart) — only after
+    ``MONITOR_RERUN_BACKOFF`` when it ended within a minute of starting (the monitor keeps
+    running itself while anything is held, so that is a state a re-run cannot change).
     """
     state.once_this_process("monitor", day)  # a retry of it in this process is not alerted
     state.mark_started("monitor", day, note=now.isoformat(timespec="seconds"))
@@ -994,6 +1022,14 @@ def _run_recovery_monitor(day, now, settings, state, *, runner, alert, stop, clo
                 f"restarted before {settings.deadline:%H:%M} IST runs the monitor again."
             )
             return
+        if result.rc == POSITIONS_LEFT_EXIT_CODE:  # its shutdown ran but could not sell all
+            alert(
+                f"recovery `skopaq monitor` of {day} was stopped with the scheduler at "
+                f"{stopped_at:%H:%M} IST and exited rc={result.rc}: positions are still open "
+                f"or an exit failed. {_CHECK_THE_BROKER} A scheduler restarted before "
+                f"{settings.deadline:%H:%M} IST runs the monitor again."
+            )
+            return
         if result.rc != 0:  # killed, or ended without its shutdown's EOD exit
             killed = f", killed {settings.kill_after_seconds}s later" if result.killed else ""
             alert(
@@ -1003,8 +1039,26 @@ def _run_recovery_monitor(day, now, settings, state, *, runner, alert, stop, clo
                 f"{settings.deadline:%H:%M} IST runs the monitor again."
             )
             return
+    ended_at = clock().astimezone(IST)
+    if (result.rc == POSITIONS_LEFT_EXIT_CODE and not result.deadline_hit
+            and ended_at.date() == day and ended_at.time() < NSE_MARKET_CLOSE):
+        # The market is still open: not final. No exit code, so the next tick runs it again
+        if ended_at - now.astimezone(IST) < _QUICK_RUN:
+            state.defer("monitor", day, ended_at + MONITOR_RERUN_BACKOFF)
+        if state.once_this_process("monitor-positions-left", day):
+            alert(
+                f"recovery `skopaq monitor` of {day} ended at {ended_at:%H:%M} IST with "
+                f"positions still open, failed exits or unconfirmed orders (rc={result.rc}); "
+                f"running it again {_MONITOR_UNTIL}. {_CHECK_THE_BROKER}"
+            )
+        return
     state.record_exit("monitor", day, result.rc)
-    if result.rc != 0:
+    if result.rc == POSITIONS_LEFT_EXIT_CODE:
+        alert(
+            f"recovery `skopaq monitor` of {day} ended with positions still open, failed "
+            f"exits or unconfirmed orders (rc={result.rc}). {_CHECK_THE_BROKER}"
+        )
+    elif result.rc != 0:
         alert(f"recovery `skopaq monitor` exited rc={result.rc} on {day}: check open positions")
 
 
@@ -1056,6 +1110,8 @@ def describe(settings: ScheduleSettings, now: datetime, state: SchedulerState) -
             return "not started"
         rc = state.last_exit(job, day)
         labels = {INTERRUPTED_RC: " (interrupted)", PRE_OPEN_FAILED_EXIT_CODE: " (PRE_OPEN failed)"}
+        if job == "monitor":
+            labels[POSITIONS_LEFT_EXIT_CODE] = " (positions left open)"
         return f"started {note}" + ("" if rc is None else f", rc={rc}{labels.get(rc, '')}")
 
     # The live recovery monitor, only on a day it ran (no rc yet: it runs again after a restart).

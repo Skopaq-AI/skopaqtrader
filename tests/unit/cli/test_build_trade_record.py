@@ -212,3 +212,46 @@ class TestBuildTradeRecord:
         record = self.build(result, self.config)
 
         assert record.slippage == Decimal("0")
+
+
+class TestLiveTradeRecord:
+    """Live rows carry what the broker confirmed: the filled quantity and the order ids."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.build = _import_build_trade_record()
+        self.config = type("Config", (), {"asset_class": "equity"})()
+
+    def _live(self, **execution) -> AnalysisResult:
+        result = _make_result(action="SELL", quantity=5, mode="live")
+        result.execution = ExecutionResult(success=True, mode="live", fill_price=95.0,
+                                           **execution)
+        return result
+
+    def test_a_partial_fill_records_the_filled_quantity_and_its_orders(self):
+        record = self.build(self._live(
+            filled_quantity=Decimal(3), requested_quantity=Decimal(5), outcome="partial",
+            order_ids=["EQ-1"], fill_price_source="trades"), self.config)
+
+        assert record.quantity == 3 and record.order_id == "EQ-1"
+        assert record.model_signals["broker"] == {
+            "outcome": "partial", "requested_qty": 5, "fill_price_source": "trades",
+            "remaining_open": False, "fill_unconfirmed": False, "order_ids": ["EQ-1"]}
+        assert record.model_signals["cache_hits"] == 5      # the rest is as before
+
+    def test_a_multi_order_exit_joins_its_order_ids(self):
+        record = self.build(self._live(filled_quantity=Decimal(5), outcome="filled",
+                                       order_ids=["EQ-1", "EQ-2"]), self.config)
+        assert record.order_id == "EQ-1,EQ-2"
+
+    def test_a_late_fill_row_has_no_order_id(self):
+        """trades.order_id is UNIQUE: the late fill's order may already be on a row."""
+        record = self.build(self._live(filled_quantity=Decimal(6), outcome="late_fill",
+                                       order_ids=["EQ-1"]), self.config)
+        assert record.order_id is None and record.quantity == 6
+        assert record.model_signals["broker"]["late_fill_of"] == "EQ-1"
+
+    def test_a_paper_row_is_unchanged(self):
+        record = self.build(_make_result(mode="paper"), self.config)
+        assert record.order_id is None and record.quantity == 10
+        assert "broker" not in record.model_signals
