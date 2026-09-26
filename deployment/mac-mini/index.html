@@ -1,0 +1,2811 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI Algorithmic Trading Platform for Indian Equities">
+      
+      
+      
+        <link rel="canonical" href="https://samuelvinay91.github.io/skopaqtrader/deployment/mac-mini/">
+      
+      
+        <link rel="prev" href="../../architecture/notifications/">
+      
+      
+        <link rel="next" href="../docker/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Mac mini (Docker) - SkopaqTrader Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="cyan" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mac-mini-docker" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SkopaqTrader Docs" class="md-header__button md-logo" aria-label="SkopaqTrader Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SkopaqTrader Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Mac mini (Docker)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="cyan" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="cyan" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/samuelvinay91/skopaqtrader" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    samuelvinay91/skopaqtrader
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../claude-code/setup/" class="md-tabs__link">
+          
+  
+  
+  Claude Code Integration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../trading/equity-analysis/" class="md-tabs__link">
+          
+  
+  
+  Trading
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../telegram/setup/" class="md-tabs__link">
+          
+  
+  
+  Telegram Bot
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/pipeline/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contributing/guide/" class="md-tabs__link">
+          
+  
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SkopaqTrader Docs" class="md-nav__button md-logo" aria-label="SkopaqTrader Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SkopaqTrader Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/samuelvinay91/skopaqtrader" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    samuelvinay91/skopaqtrader
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Code Integration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Claude Code Integration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../claude-code/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../claude-code/mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../claude-code/skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../claude-code/dual-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dual-Mode Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trading
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Trading
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trading/equity-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Equity Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trading/options-selling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Options Selling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trading/gtt-orders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GTT Orders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trading/swing-trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swing Trading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trading/live-trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Live Trading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telegram Bot
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Telegram Bot
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../telegram/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../telegram/commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../telegram/scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduled Jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/kite-connect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kite Connect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../indstocks_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    INDstocks API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ollama/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ollama Local Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mac mini (Docker)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mac mini (Docker)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-cutover-do-this-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Cutover (do this first)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-static-egress-ip-for-indstocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Static egress IP for INDstocks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mac-host-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mac host setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Verify
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-daily-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Daily operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-going-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Going live
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-holidays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Holidays
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-ollama-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Ollama (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-kite-and-cloudflare-tunnel-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Kite and Cloudflare Tunnel (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-claude-code-mcp-on-the-mac-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Claude Code MCP on the Mac (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Backups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-services-and-host-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. Services and host requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flyio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fly.io
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-cutover-do-this-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Cutover (do this first)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-static-egress-ip-for-indstocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Static egress IP for INDstocks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mac-host-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mac host setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Verify
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-daily-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Daily operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-going-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Going live
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-holidays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Holidays
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-ollama-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Ollama (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-kite-and-cloudflare-tunnel-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Kite and Cloudflare Tunnel (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-claude-code-mcp-on-the-mac-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Claude Code MCP on the Mac (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Backups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-services-and-host-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. Services and host requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="mac-mini-docker">Mac mini (Docker)</h1>
+<p>Run SkopaqTrader unattended on a Mac mini M4 (Apple Silicon) with Docker Desktop or
+OrbStack. One <code>docker compose up -d --build</code> starts the API, the Telegram bot and a
+scheduler that runs one autonomous daemon session per NSE trading day. The same
+<code>docker-compose.yml</code> works on any always-on Linux host.</p>
+<div class="admonition warning">
+<p class="admonition-title">Unattended trading</p>
+<p>The scheduler places orders without supervision. Start in paper mode
+(<code>SKOPAQ_SCHEDULER_MODE=paper</code>, the default), paper-trade for at least a week,
+and read the logs daily. You are responsible for every order it places.</p>
+</div>
+<p>The shell blocks below contain no <code>#</code> comments, so they paste into macOS's default zsh
+as they are (zsh treats <code>#</code> as text unless <code>setopt interactivecomments</code> is on).</p>
+<h2 id="1-what-runs">1. What runs</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>What it does</th>
+<th>Health check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api</code></td>
+<td>FastAPI on <code>127.0.0.1:8000</code> only (Kite OAuth, dashboard, <code>/health</code>)</td>
+<td><code>GET /health</code></td>
+</tr>
+<tr>
+<td><code>telegram</code></td>
+<td>Telegram bot (long polling, commands, weekday jobs)</td>
+<td>heartbeat file younger than 3 min</td>
+</tr>
+<tr>
+<td><code>scheduler</code></td>
+<td>One daemon session per NSE trading day</td>
+<td>heartbeat file younger than 3 min</td>
+</tr>
+</tbody>
+</table>
+<p>The scheduler (<code>skopaq schedule</code>, <code>skopaq/execution/scheduler.py</code>):</p>
+<ul>
+<li>starts a session at <strong>09:15 IST</strong> on NSE trading days (weekends and the holidays in
+  <code>skopaq/risk/calendar.py</code> are skipped);</li>
+<li>catches up until <strong>11:30</strong> if the Mac was down at 09:15; after that the day is
+  skipped and you get a Telegram alert;</li>
+<li>starts at most one session per day, even across restarts (a marker file is written
+  before launch). The exception: a session whose PRE_OPEN phase failed (exit code 3:
+  INDstocks token missing or expiring before 15:45, broker login, LLM setup; nothing
+  was traded) is started again every 5 minutes until 11:30;</li>
+<li>checks at <strong>08:45</strong> (<code>SKOPAQ_SCHEDULER_PREFLIGHT</code>) that the INDstocks token is set and
+  lasts until 15:45, and alerts if not;</li>
+<li>after a restart, alerts once about a session that was cut off (power cut, OOM kill,
+  Docker Desktop crash or update). In live mode, before 15:45, it then runs
+  <code>skopaq monitor</code>, so the open delivery (CNC) positions keep their stop-loss and the
+  15:20 EOD exit instead of being carried overnight unmanaged. Paper positions of that
+  session are gone (the paper engine keeps them in memory). The same recovery runs when
+  the session exits non-zero on its own before 15:45 (the session failed, or an OOM kill
+  of the session alone); the daemon also runs its CLOSING phase when it fails after
+  opening trades. The recovery monitor ends by itself once nothing is held or open, or
+  shortly after the close (15:31), rather than running to 15:45 (while anything is still
+  held it keeps running): rc 0 when flat, rc 4 when positions remain open, an exit failed
+  or an order is unconfirmed, which is alerted as "check the broker" (ending with rc 4
+  before 15:30, while it can still sell, it is run again at the next poll, or 5 minutes
+  later if it ended within a minute of starting; its own <code>positions-left</code> alert goes out
+  once a day for the same state);</li>
+<li>tracks that recovery monitor across restarts too. Unlike the daemon, <code>skopaq monitor</code>
+  does not sell when it is stopped before the 15:20 EOD exit, so a restart or
+  <code>docker compose up -d</code> during it leaves positions unmanaged: you get an alert, and a
+  scheduler that is back before 15:45 alerts again and runs the monitor again (the same
+  after a power cut during it, or when it had to be killed). Stopped from 15:20 on, it
+  sells what is left as it exits, so it counts as done, unless it exits 4 (shares still
+  held or an order unconfirmed): that is alerted, and a scheduler back before 15:45 runs
+  it again (until 15:30 it can still sell). Found after 15:45 or on a later day, it
+  alerts to check open positions at the broker. A monitor that cannot be started (e.g.
+  out of memory) is alerted once and retried every poll until 15:45;</li>
+<li>sends SIGTERM to a session still running at <strong>15:45</strong> and SIGKILL 5 minutes later. In
+  paper mode the daemon then closes its positions; in live mode nothing can be sold by
+  then (no order is placed after 15:29:55 IST), so it only reports what is left in a
+  CRITICAL <code>positions-left</code> alert: check the broker. A session that has to be SIGKILLed may not
+  have finished CLOSING: the alert says to check the broker, and in live mode a kill after a
+  scheduler stop (not the deadline) counts as an interrupted session, so the restarted
+  scheduler runs <code>skopaq monitor</code>. Live order work itself stops within the kill-after
+  minus <code>SKOPAQ_ORDER_SHUTDOWN_MARGIN_SECONDS</code> (300 − 60 = 240 s) after the SIGTERM, so a
+  session that is not stuck in an analysis ends before the SIGKILL;</li>
+<li>runs only once per state directory: it holds a lock on <code>scheduler/scheduler.lock</code> for
+  as long as it runs. A second scheduler on the same volume (<code>docker compose run
+  scheduler</code>, or <code>skopaq schedule</code> without <code>--check</code> inside the container) exits 1
+  instead of taking the running session for an interrupted one, alerting once a day (a
+  restart policy runs it again and again). <code>skopaq schedule --check</code> takes no lock;</li>
+<li>runs <code>skopaq settle</code> at <strong>18:30</strong> as a backstop;</li>
+<li>alerts on Telegram (<code>SKOPAQ_TELEGRAM_CHAT_ID</code>) when a session fails, a day is
+  missed, the holiday list for the year is missing or the session log cannot be written
+  (disk full: the session keeps running and its output still reaches
+  <code>docker compose logs scheduler</code>), and can ping a dead-man's switch
+  (<code>SKOPAQ_SCHEDULER_PING_URL</code>).</li>
+</ul>
+<p><code>skopaq daemon</code> exits 0 when the session ran, 3 when PRE_OPEN failed (nothing traded,
+retried until 11:30) and 1 only when the session itself failed (an exception ended it).
+A candidate whose analysis failed (an LLM rate limit, a data error) is listed in the
+session report but does not fail the session, so it causes no failure alert, failed ping
+or recovery monitor.</p>
+<p>A mistyped <code>SKOPAQ_SCHEDULER_*</code> value stops only the scheduler (with an alert once a day;
+<code>api</code> and <code>telegram</code> keep running). A <code>SKOPAQ_SCHEDULER_CONFIRM_LIVE</code> other than
+true/false (or yes/no, on/off, 1/0) counts as not confirmed: live sessions are skipped
+and alerted, naming the value.</p>
+<p>The position monitor is not scheduled separately: it runs inside each daemon session
+(MONITORING phase). It sells from 15:20 IST and ends once flat; in live mode at the latest
+at 15:31, and the session then sends a CRITICAL alert if positions remain.</p>
+<p>State lives in two named volumes, shared by every container:</p>
+<table>
+<thead>
+<tr>
+<th>Volume</th>
+<th>Path in the container</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/.skopaq/token.enc</code>, <code>token.key</code></td>
+<td>INDstocks token (encrypted) and its key</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/.skopaq/HALT</code></td>
+<td>kill-switch file</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/.skopaq/locks/</code></td>
+<td>per-symbol SELL locks (<code>sell-&lt;SYMBOL&gt;.lock</code>): one SELL of a symbol at a time across containers; per-order locks (<code>order-&lt;ID&gt;.lock</code>): one process at a time resumes an order and records its late fill</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/.skopaq/orders/</code></td>
+<td>order journal (<code>YYYY-MM-DD.jsonl</code>): Skopaq's own live orders, so a later process resumes the ones left open</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/.tradingagents/</code></td>
+<td>decision log (settled by <code>skopaq settle</code>)</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/results/</code>, <code>/home/skopaq/.cache/</code></td>
+<td>analysis reports, data cache</td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/scheduler/</code></td>
+<td>scheduler markers (<code>daemon-YYYY-MM-DD.started</code>, <code>.rc</code>, <code>monitor-…</code> for the recovery monitor) and <code>scheduler.lock</code></td>
+</tr>
+<tr>
+<td><code>skopaq-home</code></td>
+<td><code>/home/skopaq/logs/daemon/</code></td>
+<td>one log per session (<code>daemon-YYYY-MM-DD.log</code>, kept 60 days)</td>
+</tr>
+<tr>
+<td><code>skopaq-data</code></td>
+<td><code>/data/skopaq_kite_token.json</code></td>
+<td>Kite access token (written by <code>api</code>, read by <code>telegram</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Native on the Mac (not in Docker): Ollama (optional, uses the Metal GPU),
+<code>cloudflared</code> (optional, for Kite), and the Claude Code MCP server (optional).</p>
+<h2 id="2-cutover-do-this-first">2. Cutover (do this first)</h2>
+<p>Only one daemon may trade the account and only one process may poll the Telegram bot.</p>
+<ol>
+<li>Disable the Railway daemon cron service (<code>railway-daemon.toml</code>).</li>
+<li>Stop the Fly Telegram bot: <code>fly scale count 0 -a skopaq-telegram</code>.</li>
+<li>Decide whether the Fly/Railway API stays up. If it does, keep its Kite redirect URL
+   until your tunnel (section 12) works.</li>
+<li>Apply <code>supabase/migrations/001</code>–<code>003</code> in the Supabase SQL editor. <code>003_system_flags.sql</code>
+   makes the kill switch reach every container and the native MCP server.</li>
+</ol>
+<h2 id="3-static-egress-ip-for-indstocks">3. Static egress IP for INDstocks</h2>
+<p>INDstocks only accepts API calls from a whitelisted IPv4. A Cloudflare Tunnel is
+<strong>inbound only</strong>: it does not give the Mac a static outbound IP. Pick one:</p>
+<ul>
+<li>a static IPv4 from your ISP;</li>
+<li>a WireGuard or Tailscale exit node on a small VPS in Mumbai;</li>
+<li>an egress proxy: set <code>HTTPS_PROXY</code>, <code>HTTP_PROXY</code> and
+  <code>NO_PROXY=localhost,127.0.0.1,host.docker.internal</code> in <code>.env</code>.</li>
+</ul>
+<p>Register the IP with INDstocks (and with Kite, for orders), put it in
+<code>SKOPAQ_EXPECTED_EGRESS_IP</code>, and let <code>verify.sh</code> confirm the containers use it.</p>
+<h2 id="4-mac-host-setup">4. Mac host setup</h2>
+<ul>
+<li><strong>Power:</strong>
+  <code>sudo pmset -a sleep 0 disksleep 0 displaysleep 10 powernap 0 womp 1 autorestart 1 tcpkeepalive 1</code>,
+  then check <code>pmset -g</code>.</li>
+<li><strong>Automatic login</strong> for the user that runs Docker (System Settings &gt; Users &amp; Groups).
+  This requires FileVault off. If you keep FileVault on, someone must unlock the Mac
+  after every power loss; use <code>sudo fdesetup authrestart</code> for planned reboots.</li>
+<li><strong>Docker Desktop:</strong> turn on "Start Docker Desktop when you sign in"; give it 4–6 CPUs,
+  6–8 GB RAM (leave room for native Ollama) and 64 GB or more of disk; turn off
+  Resource Saver and automatic updates (update on weekends). OrbStack works too.</li>
+<li><strong>macOS updates:</strong> turn off automatic installation; apply updates on weekends.</li>
+<li><strong>Network:</strong> wired Ethernet, a DHCP reservation, and a UPS for the Mac and the router.</li>
+<li><strong>Time:</strong> keep "Set time and date automatically" on. Setting the Mac's time zone to
+  Asia/Kolkata is recommended; the containers set <code>TZ=Asia/Kolkata</code> themselves.</li>
+<li><strong>Remote access:</strong> Tailscale or SSH (System Settings &gt; General &gt; Sharing &gt; Remote Login).</li>
+</ul>
+<h2 id="5-install">5. Install</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/samuelvinay91/skopaqtrader.git
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>skopaqtrader
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
+</code></pre></div>
+<p>Fill in <code>.env</code> (below). Compose treats <code>$</code> in a value as a variable, so write a literal
+<code>$</code> as <code>$$</code>. Then build (natively for arm64: no <code>--platform</code> flag) and start the stack:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>build
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>docker<span class="w"> </span>compose<span class="w"> </span>ps
+</code></pre></div>
+<p><code>api</code>, <code>telegram</code> and <code>scheduler</code> turn "healthy" within about 2 minutes.</p>
+<p>Minimum <code>.env</code>: an LLM key (<code>SKOPAQ_GOOGLE_API_KEY</code>), the Supabase URL and service key,
+<code>SKOPAQ_TELEGRAM_BOT_TOKEN</code>, <code>SKOPAQ_TELEGRAM_CHAT_ID</code> (scheduler alerts go here),
+<code>SKOPAQ_TELEGRAM_ALLOWED_CHAT_IDS</code>, and <code>SKOPAQ_CORS_ORIGINS</code>. Keep
+<code>SKOPAQ_SCHEDULER_MODE=paper</code>.</p>
+<h2 id="6-verify">6. Verify</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/macmini/verify.sh</code></td>
+<td>host, configuration and stack checks</td>
+</tr>
+<tr>
+<td><code>scripts/macmini/verify.sh --build --up</code></td>
+<td>build and start first</td>
+</tr>
+<tr>
+<td><code>scripts/macmini/verify.sh --probe-kill-switch</code></td>
+<td>halt in <code>api</code>, check the scheduler sees it, lift the probe's own halt</td>
+</tr>
+<tr>
+<td><code>scripts/macmini/verify.sh --unit-tests</code></td>
+<td>run <code>tests/unit</code> inside the image, without <code>.env</code> or the stack's volumes</td>
+</tr>
+<tr>
+<td><code>scripts/macmini/verify.sh --dry-run-daemon</code></td>
+<td>a scan-only session now (makes LLM calls)</td>
+</tr>
+</tbody>
+</table>
+<p>Each line is <code>PASS</code>, <code>WARN</code>, <code>FAIL</code> or <code>INFO</code>; the script exits 1 if anything FAILs and
+never prints secret values. Fix every FAIL. The kill-switch probe refuses to run on a
+trading day between 09:00 and 15:45 IST unless you add <code>--force</code>, and is skipped (WARN)
+while trading is already halted, so it never lifts a halt it did not set; a halt set while
+it runs is left in place too (the probe lifts only its own). It is also skipped (FAIL)
+when Supabase is configured but cannot be read, since it could not see a halt set there.
+Expected output (abridged):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>PASS  host: macOS on Apple Silicon (arm64)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>PASS  engine architecture: aarch64 (native arm64 images)
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>PASS  api: running/healthy
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>PASS  api port: 127.0.0.1:8000 (loopback only)
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>PASS  volumes: home (.skopaq, .tradingagents, working directory) and /data are writable
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>PASS  schedule --check: ok
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        Today:          NSE trading day
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>        Next session:   Mon 2026-09-28 at 09:15 IST
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>PASS  egress IP: 203.0.113.7 matches SKOPAQ_EXPECTED_EGRESS_IP
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>Summary: 27 passed, 1 warnings, 0 failed
+</code></pre></div>
+<p>Manual checks:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker compose logs -f scheduler</code></td>
+<td>the scheduler and today's session</td>
+</tr>
+<tr>
+<td><code>docker compose exec scheduler skopaq schedule --check</code></td>
+<td>today's plan and the next session</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-daily-operations">7. Daily operations</h2>
+<ul>
+<li><strong>INDstocks token</strong>, every trading day before 08:45 IST (the pre-flight check):
+  <code>docker compose exec api skopaq token set &lt;TOKEN&gt;</code>. It is stored on the shared home
+  volume, so the scheduler's session uses it. A token lasts 24 hours from when you set
+  it, and a session refuses one that expires before 15:45, so yesterday's token is not
+  enough: set a fresh one every morning. Set late, the session still starts within
+  5 minutes, until 11:30.</li>
+<li><strong>Kite login:</strong> open the link the bot sends at 09:00 (<code>/login</code>), served through your
+  tunnel (section 12). A Kite token expires at 06:00 IST the next day; after that the
+  bot, the API and the MCP server stop using it and ask for a new login.</li>
+<li><strong>Kill switch:</strong> <code>docker compose exec api skopaq halt "reason"</code>, Telegram <code>/halt</code>, or
+  the native MCP <code>halt_trading</code>. With Supabase migration 003 applied, all of them reach
+  every process; <code>skopaq resume</code> (or <code>/resume</code>) lifts it.</li>
+<li><strong>Logs:</strong> <code>docker compose exec scheduler ls logs/daemon</code> and
+  <code>docker compose exec scheduler cat logs/daemon/daemon-$(date +%F).log</code>. Container
+  logs rotate at 5 x 10 MB per service.</li>
+</ul>
+<h2 id="8-going-live">8. Going live</h2>
+<ol>
+<li>Paper-trade for at least one week and review the results (<code>skopaq report</code>).</li>
+<li>Confirm the egress IP is whitelisted (verify.sh <code>egress IP</code> is PASS).</li>
+<li>Set <code>SKOPAQ_SCHEDULER_MODE=live</code> and <code>SKOPAQ_SCHEDULER_CONFIRM_LIVE=true</code> in <code>.env</code>.
+   Without the confirmation (or with a value that is not true/false) the scheduler starts
+   no sessions and alerts instead.</li>
+<li>Outside 09:15–15:45 IST: <code>docker compose up -d scheduler</code>.</li>
+</ol>
+<h2 id="9-updates">9. Updates</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>pull<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>Only outside 09:15–15:45 IST on trading days. Recreating the scheduler during a session
+sends it SIGTERM, and the daemon's CLOSING phase sells every open position; live order work
+stops within the kill-after minus 60 s (240 s) of the SIGTERM (a session still running
+5 minutes later is killed; in live mode the new scheduler then runs <code>skopaq monitor</code>).
+During a recovery <code>skopaq monitor</code> a recreate leaves the positions unmanaged until the new
+scheduler starts it again.</p>
+<h2 id="10-holidays">10. Holidays</h2>
+<p>The NSE holiday list lives in <code>skopaq/risk/calendar.py</code> (<code>NSE_TRADING_HOLIDAYS</code>). Add
+next year's list every December, or set <code>SKOPAQ_NSE_HOLIDAYS</code> (comma-separated
+<code>YYYY-MM-DD</code>; any date of a year marks that year as known). Without a list for the
+current year the scheduler refuses to trade and alerts once a day. Ad-hoc closures go
+in <code>SKOPAQ_NSE_HOLIDAYS</code> too. Special sessions (Muhurat trading) are not traded.</p>
+<h2 id="11-ollama-optional">11. Ollama (optional)</h2>
+<ul>
+<li>Install it natively (the app, or <code>brew services start ollama</code>) so it uses Metal, and
+  pull a 7–8B model (<code>ollama pull qwen2.5:7b</code>).</li>
+<li>Set <code>SKOPAQ_OLLAMA_ENABLED=true</code> and <code>SKOPAQ_OLLAMA_MODEL</code>. Containers reach it at
+  <code>http://host.docker.internal:11434</code> (<code>SKOPAQ_DOCKER_OLLAMA_BASE_URL</code>).</li>
+<li>It is only used when no Gemini key is set.</li>
+<li>If containers get "connection refused", run Ollama with <code>OLLAMA_HOST=0.0.0.0</code> and
+  block port 11434 from the LAN in the macOS firewall.</li>
+</ul>
+<h2 id="12-kite-and-cloudflare-tunnel-optional">12. Kite and Cloudflare Tunnel (optional)</h2>
+<ul>
+<li><code>brew install cloudflared</code>, then <code>sudo cloudflared service install &lt;token&gt;</code> (a
+  LaunchDaemon, so it runs without a login), with the tunnel pointing at
+  <code>http://localhost:8000</code>.</li>
+<li>Put Cloudflare Access in front of every path except <code>/api/kite/callback</code> and
+  <code>/api/kite/postback</code>.</li>
+<li>Set the Kite app's redirect URL to <code>https://&lt;host&gt;/api/kite/callback</code>.</li>
+<li>Set <code>SKOPAQ_PUBLIC_BASE_URL=https://&lt;host&gt;</code> (login links in Telegram) and
+  <code>SKOPAQ_API_TOKEN</code> (guards <code>/api/chat/*</code> and <code>/api/kite/token</code>).</li>
+<li>Rotate the current Kite session: <code>/api/kite/token</code> was publicly reachable on Fly.</li>
+</ul>
+<h2 id="13-claude-code-mcp-on-the-mac-optional">13. Claude Code MCP on the Mac (optional)</h2>
+<p><strong>Native</strong> (<code>.claude/.mcp.json</code> uses python.org Python 3.14): run
+<code>/Applications/Python 3.14/Install Certificates.command</code> once, then from the repo:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[deploy]"</span>
+</code></pre></div>
+<p>The native server has no <code>/data</code> volume, so it cannot read the Kite session that <code>api</code>
+stores there. Without the step below, <code>get_quote</code> and the other Kite-first tools quietly
+fall back to INDstocks, which works only from the whitelisted egress IP. Give the server
+<code>SKOPAQ_API_BASE_URL</code> in the <code>env</code> block of its entry in <code>.claude/.mcp.json</code>, so it asks
+the local API for the token:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">"skopaq"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"-m"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skopaq.mcp_server"</span><span class="p">],</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"SKOPAQ_API_BASE_URL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000"</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>Set it there, never in <code>.env</code>: every container reads <code>.env</code>, and <code>api</code> would then call
+itself. <code>SKOPAQ_API_TOKEN</code>, if you set one, is read from <code>.env</code> like the other keys (the
+server runs from the repo); pick one without <code>$</code>, because compose turns <code>$$</code> into <code>$</code> but
+the native server reads <code>.env</code> literally. The container server below mounts <code>/data</code> and
+needs none of this.</p>
+<p><strong>Container</strong> alternative, in your MCP config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">"skopaq"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"docker"</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"compose"</span><span class="p">,</span><span class="w"> </span><span class="s2">"-f"</span><span class="p">,</span><span class="w"> </span><span class="s2">"/path/to/skopaqtrader/docker-compose.yml"</span><span class="p">,</span><span class="w"> </span><span class="s2">"run"</span><span class="p">,</span><span class="w"> </span><span class="s2">"--rm"</span><span class="p">,</span><span class="w"> </span><span class="s2">"-T"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">]</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="p">}</span>
+</code></pre></div>
+<p>Each has its own paper-engine state; the kill switch is shared through Supabase. Neither
+MCP server (native or container) has a live INDstocks client: its <code>place_order</code> goes to
+the paper engine, so it takes no SELL lock and reads no INDstocks order book.</p>
+<p><strong>Kite orders are real.</strong> Once a Kite session exists (the container reads it from <code>/data</code>;
+the native server fetches it through <code>SKOPAQ_API_BASE_URL</code>, above), the MCP tools
+<code>place_amo_order</code>, <code>place_bracket</code>, <code>place_cover</code>, <code>place_basket</code>, <code>buy_option_contract</code>,
+<code>trade_future</code>, <code>invest_mutual_fund</code>, <code>place_gtt_order</code> and <code>setup_swing_trade</code> place real
+orders on that Zerodha account, whatever <code>SKOPAQ_TRADING_MODE</code> says, outside the
+<code>SafetyChecker</code>, the kill switch, the no-short-sale check and the SELL locks. The repo's
+<code>.claude/settings.json</code> does not auto-allow them (Claude Code asks first); leave Kite
+unconnected on this host if they should not trade. See
+<a href="../../trading/live-trading/#residual-limits">Live Trading</a>.</p>
+<h2 id="14-backups">14. Backups</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/SkopaqBackups"</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--no-deps<span class="w"> </span>-v<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/SkopaqBackups:/backup"</span><span class="w"> </span>api<span class="w"> </span>shell<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="s1">'tar czf /backup/home-$(date +%F).tgz -C /home/skopaq . &amp;&amp; tar czf /backup/data-$(date +%F).tgz -C /data .'</span>
+</code></pre></div>
+<p>Keep <code>.env</code> in a password manager, rely on Supabase's backups for the database, and
+run <code>docker system prune -f &amp;&amp; docker builder prune -f</code> monthly.</p>
+<h2 id="15-troubleshooting">15. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PermissionError</code> on <code>/home/skopaq</code> or <code>/data</code></td>
+<td><code>docker compose run --rm --no-deps --user root api chown -R skopaq:skopaq /home/skopaq /data</code></td>
+</tr>
+<tr>
+<td>Telegram <code>Conflict: terminated by other getUpdates request</code> (HTTP 409)</td>
+<td>Another poller uses the token: <code>fly scale count 0 -a skopaq-telegram</code>, stop other copies</td>
+</tr>
+<tr>
+<td><code>scheduler</code> unhealthy</td>
+<td><code>docker compose logs scheduler</code>; <code>docker compose exec scheduler skopaq schedule --check</code></td>
+</tr>
+<tr>
+<td>INDstocks 401/403</td>
+<td>Today's token not set, or the egress IP is not whitelisted (verify.sh <code>egress IP</code>)</td>
+</tr>
+<tr>
+<td>Ollama unreachable from containers</td>
+<td>Section 11 (<code>OLLAMA_HOST=0.0.0.0</code>)</td>
+</tr>
+<tr>
+<td>A value with <code>$</code> is cut short</td>
+<td>Write <code>$$</code> in <code>.env</code> (compose interpolates <code>$</code>)</td>
+</tr>
+<tr>
+<td>No session on a weekday</td>
+<td><code>schedule --check</code>: holiday, missing holiday list, live not confirmed, or <code>SKOPAQ_SCHEDULER_ENABLED=false</code></td>
+</tr>
+<tr>
+<td>Alert "PRE_OPEN failed" or "pre-flight"</td>
+<td>Usually the INDstocks token: set it; the session is retried every 5 min until 11:30</td>
+</tr>
+<tr>
+<td>Alert "session ... was interrupted"</td>
+<td>The Mac or Docker died mid-session. Check open positions at the broker (in live mode the scheduler runs <code>skopaq monitor</code>)</td>
+</tr>
+<tr>
+<td>Alert "daemon exited rc=N"</td>
+<td>The session itself failed or was killed (a failed candidate analysis alone exits 0): read <code>logs/daemon/daemon-&lt;date&gt;.log</code>. In live mode before 15:45 the scheduler runs <code>skopaq monitor</code>; otherwise check open positions at the broker</td>
+</tr>
+<tr>
+<td>Alert "did not stop within 300s ... was killed"</td>
+<td>The session ignored SIGTERM (e.g. mid-analysis), so CLOSING may not have finished. Check open positions at the broker; in live mode a scheduler back before 15:45 runs <code>skopaq monitor</code></td>
+</tr>
+<tr>
+<td>Alert "recovery <code>skopaq monitor</code> ... was stopped" or "... was cut off"</td>
+<td>The scheduler stopped or died during the recovery monitor. Before 15:45 the restarted scheduler runs it again; otherwise check open positions at the broker</td>
+</tr>
+<tr>
+<td>Alert "could not run the recovery <code>skopaq monitor</code>"</td>
+<td>Launching it failed (out of memory, process limit). Check open positions at the broker; the scheduler retries every poll until 15:45 without further alerts</td>
+</tr>
+<tr>
+<td>Alert "recovery <code>skopaq monitor</code> ... rc=4" ("positions still open, failed exits or unconfirmed orders")</td>
+<td>The monitor ended with shares still held, an exit that did not fill or an order it could not confirm. Check positions and the order book at the broker now: delivery positions are carried overnight</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>sell-refused:&lt;symbol&gt;:open-sell</code>, <code>exit-blocked:&lt;symbol&gt;:foreign-open-sell</code> or <code>exit-blocked:&lt;symbol&gt;:closing-skip</code> naming an order</td>
+<td>An open SELL order at the broker already covers the shares; the alert names it and its status. Cancel it at the broker if it is not yours to keep; the monitor takes the shares back into its care once it is gone</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>sell-refused:&lt;symbol&gt;:open-sell</code> or <code>exit-blocked:&lt;symbol&gt;:closing-skip</code> mentioning "a SELL whose placement is uncertain" or "not listed in the order book yet"</td>
+<td>A Skopaq SELL whose placement answer was lost, or a Skopaq SELL order the order book does not list yet (stuck or still being worked), may be selling the shares. Check the order book for it; it counts against the shares for <code>SKOPAQ_ORDER_SELL_FILL_LAG_WINDOW_SECONDS</code> (10 min) or until it is final, then SELLs are allowed again</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>sell-refused:&lt;symbol&gt;:…</code> saying "older delivery holdings are not sold by an exit"</td>
+<td>A protective exit (monitor, CLOSING) found the day's position already covered by Skopaq's own open, unconfirmed or just-filled SELLs; your older holdings of the stock are never sold to make up the difference. Nothing to do unless the named orders should not be working</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>exit-blocked:&lt;symbol&gt;:unshown-buy</code></td>
+<td>A BUY the broker confirmed does not show in positions yet, so it cannot be sold. Check the positions at the broker; the monitor keeps watching for it until 15:31</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>sell-refused:&lt;symbol&gt;:book-unreadable</code> or <code>…:holdings-unreadable</code></td>
+<td>INDstocks' order book (or holdings) could not be read (token, outage), so the SELL was refused rather than risk selling twice (or selling what is not held). Check the token and the INDstocks status; the monitor retries. <code>SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK=true</code> overrides the order-book case (not recommended)</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>order-stuck</code>, <code>order-deadline</code>, <code>order-interrupted</code> or <code>placement-uncertain</code></td>
+<td>An order may still be working at the broker (a cancel was not confirmed, or a placement answer was lost). Check the order book for the named order and cancel it there if it should not be working; the monitor also resumes it</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>placement-match</code></td>
+<td>An order that only looks like a lost Skopaq placement appeared (same stock, side and quantity, created about then). Skopaq watches it and books its fills but never cancels it: check at the broker whether it is Skopaq's, and cancel it there if it should not stay</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>booking-unconfirmed</code></td>
+<td>A late fill's trade rows may not have been written: the write failed, or the process writing them died. Skopaq counts only confirmed bookings, so the next booking of that order starts from the last confirmed total — if the rows had in fact been written, the named shares are booked twice. Check the trade rows for the named order against the broker's trade book</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>late-fill-unclaimed</code></td>
+<td>A late fill was not booked because the order journal directory cannot be written (full disk, permissions). Book the named shares by hand, then fix the <code>skopaq-home</code> volume</td>
+</tr>
+<tr>
+<td>ORDER ALERT <code>exit-not-filled</code>, <code>exit-partial</code>, <code>exit-rejected</code> or <code>exit-replace-blocked</code></td>
+<td>A protective exit did not sell everything after its attempts (or its remainder could not be re-placed: open SELLs, unshown fills, or an unreadable book or holdings). The monitor tries again next cycle until 15:29:55 IST; shares still held after the close are carried overnight (a <code>positions-left</code> alert follows): check the broker</td>
+</tr>
+<tr>
+<td>Alert "another scheduler is already running"</td>
+<td>A second scheduler was started on the same volume (<code>docker compose run scheduler</code>, or <code>skopaq schedule</code> without <code>--check</code>). It exited; the running one carries on (sent once a day)</td>
+</tr>
+<tr>
+<td>Alert "not running: Invalid scheduler configuration"</td>
+<td>Fix the named <code>SKOPAQ_SCHEDULER_*</code> value in <code>.env</code>, then <code>docker compose up -d scheduler</code>. <code>api</code> and <code>telegram</code> are not affected</td>
+</tr>
+<tr>
+<td>Log "SKOPAQ_ORDER_... is not a valid value; using the default" (or <code>SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK</code>, <code>SKOPAQ_INDSTOCKS_ORDER_REMARKS_ENABLED</code>, <code>SKOPAQ_MONITOR_RESYNC_CYCLES</code>)</td>
+<td>A live order setting in <code>.env</code> does not parse (e.g. <code>30s</code>). Every service keeps running with that setting's default (the two switches off); fix the value and <code>docker compose up -d</code></td>
+</tr>
+<tr>
+<td>Alert "the session log failed"</td>
+<td>Usually a full disk: free space (Docker Desktop's disk image, <code>docker system prune</code>). The session keeps running; its output is in <code>docker compose logs scheduler</code></td>
+</tr>
+<tr>
+<td>Native MCP quotes come from INDstocks, not Kite</td>
+<td>Section 13: <code>SKOPAQ_API_BASE_URL</code> in the MCP server's <code>env</code> block</td>
+</tr>
+</tbody>
+</table>
+<h2 id="16-services-and-host-requirements">16. Services and host requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Needed for</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>INDstocks</td>
+<td>market data, orders</td>
+<td>daily token; static egress IPv4 whitelisted</td>
+</tr>
+<tr>
+<td>Kite Connect (Zerodha)</td>
+<td>optional broker, Telegram scans</td>
+<td>public HTTPS callback (tunnel); daily login</td>
+</tr>
+<tr>
+<td>Supabase</td>
+<td>kill switch across processes, P&amp;L history, memory</td>
+<td>apply migrations 001–003</td>
+</tr>
+<tr>
+<td>Upstash / LangCache</td>
+<td>optional semantic LLM cache</td>
+<td></td>
+</tr>
+<tr>
+<td>Telegram</td>
+<td>bot, scheduler alerts</td>
+<td>one poller per token</td>
+</tr>
+<tr>
+<td>LLM providers</td>
+<td>analysis (Gemini, Anthropic, OpenRouter, Perplexity)</td>
+<td>keys in <code>.env</code></td>
+</tr>
+<tr>
+<td>TypeSafe / Jev</td>
+<td>optional post screening and decisions</td>
+<td><code>SKOPAQ_TYPESAFE_API_KEY</code></td>
+</tr>
+<tr>
+<td>Data vendors</td>
+<td>yfinance, etc.</td>
+<td>outbound HTTPS</td>
+</tr>
+<tr>
+<td>Vercel</td>
+<td>optional dashboard</td>
+<td>set <code>SKOPAQ_CORS_ORIGINS</code> to its origin</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td>optional local fallback</td>
+<td>native on the Mac</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0 — Built on TradingAgents by TauricResearch
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/samuelvinay91/skopaqtrader" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
