@@ -45,6 +45,9 @@ markdown_extensions:
   - tables
   - attr_list
   - md_in_html
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
 
 nav:
   - Home: index.md
@@ -78,6 +81,7 @@ nav:
     - Mac mini (Docker): deployment/mac-mini.md
     - Docker: deployment/docker.md
     - Fly.io: deployment/flyio.md
+  - Changelog: changelog.md
   - Contributing:
     - Guide: contributing/guide.md
     - Adding Skills: contributing/skills.md
