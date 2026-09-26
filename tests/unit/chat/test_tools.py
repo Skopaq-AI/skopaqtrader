@@ -298,3 +298,119 @@ async def test_analyze_stock_returns_signal(mock_infra):
         assert "75%" in result
         assert "RELIANCE" in result
         assert "2,500.00" in result
+
+
+# ── GAP 2: a SELL's open-order context; live fills in the trade output ───────
+
+
+def _sell_inputs(positions, *, error=""):
+    from datetime import datetime, timezone
+
+    from skopaq.execution.order_router import SellInputs
+    from skopaq.execution.sellable import SellContext
+
+    return SellInputs(positions=positions, holdings=[], context=SellContext(
+        orders=(), read_at=datetime(2026, 9, 25, 5, 30, tzinfo=timezone.utc), error=error))
+
+
+def _funds(mock_infra):
+    funds = MagicMock()
+    funds.available_cash = 100_000
+    funds.used_margin = 0
+    funds.available_margin = 100_000
+    mock_infra.order_router.get_funds.return_value = funds
+
+
+@pytest.mark.asyncio
+async def test_check_safety_sell_shows_an_unreadable_order_book(mock_infra):
+    from skopaq.broker.models import Position
+    from skopaq.constants import PAPER_SAFETY_RULES
+    from skopaq.execution.safety_checker import SafetyChecker
+
+    mock_infra.safety_checker = SafetyChecker(rules=PAPER_SAFETY_RULES)
+    mock_infra.order_router.sell_inputs = AsyncMock(return_value=_sell_inputs(
+        [Position(symbol="TCS", quantity=Decimal(10))], error="HTTP 503"))
+    _funds(mock_infra)
+
+    result = await check_safety.ainvoke({"symbol": "TCS", "quantity": 5, "side": "SELL"})
+
+    assert "FAILED" in result
+    assert "Cannot read the broker's order book (HTTP 503)" in result
+    mock_infra.order_router.get_positions.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_safety_passes_no_sell_context_in_paper(mock_infra):
+    from skopaq.execution.safety_checker import SafetyResult
+
+    mock_infra.safety_checker.validate.return_value = SafetyResult(passed=True, rejections=[])
+    mock_infra.order_router.sell_inputs = AsyncMock(return_value=None)   # paper
+    mock_infra.order_router.get_positions.return_value = []
+    mock_infra.order_router.get_settled_holdings.return_value = []
+    _funds(mock_infra)
+
+    sell = await check_safety.ainvoke({"symbol": "TCS", "quantity": 5, "side": "SELL"})
+    assert "PASSED" in sell
+    assert mock_infra.safety_checker.validate.call_args.kwargs["sell_context"] is None
+    mock_infra.order_router.get_positions.assert_awaited()
+
+    mock_infra.order_router.sell_inputs.reset_mock()
+    await check_safety.ainvoke({"symbol": "TCS", "quantity": 1, "price": 100, "side": "BUY"})
+    mock_infra.order_router.sell_inputs.assert_not_called()
+    assert mock_infra.safety_checker.validate.call_args.kwargs["sell_context"] is None
+
+
+async def _trade(mock_infra, execution, mode="live"):
+    mock_infra.config.trading_mode = mode
+    result = MagicMock()
+    result.error = None
+    result.signal = MagicMock(action="SELL", confidence=80)
+    result.execution = execution
+    result.duration_seconds = 1.0
+    with patch("skopaq.graph.skopaq_graph.SkopaqTradingGraph") as MockGraph, \
+         patch("skopaq.chat.tools._compute_risk_scales", return_value=(1.0, 1.0)), \
+         patch("skopaq.chat.tools._inject_paper_quote", new_callable=AsyncMock):
+        MockGraph.return_value.analyze_and_execute = AsyncMock(return_value=result)
+        return await trade_stock.ainvoke({"symbol": "TCS"})
+
+
+@pytest.mark.asyncio
+async def test_trade_stock_reports_a_partial_live_fill(mock_infra):
+    from skopaq.broker.models import ExecutionResult
+
+    out = await _trade(mock_infra, ExecutionResult(
+        success=True, mode="live", fill_price=95.0, filled_quantity=Decimal(3),
+        requested_quantity=Decimal(5), outcome="partial", order_ids=["EQ-1"],
+        broker_message="filled 3 of 5; rest cancelled"))
+
+    assert "- Execution: Partially filled (3 of 5) (live mode)" in out
+    assert "- Orders: EQ-1" in out
+    assert "filled 3 of 5; rest cancelled" in out
+
+
+@pytest.mark.asyncio
+async def test_trade_stock_reports_an_unconfirmed_live_order(mock_infra):
+    from skopaq.broker.models import ExecutionResult
+
+    out = await _trade(mock_infra, ExecutionResult(
+        success=False, mode="live", outcome="open", order_ids=["EQ-1"], remaining_open=True,
+        rejection_reason="Order EQ-1 may still be working — cancel it at the broker"))
+
+    assert "- Execution: Unconfirmed (live mode)" in out
+    assert "- Orders: EQ-1" in out
+    assert "- Reason: Order EQ-1 may still be working" in out
+
+
+@pytest.mark.asyncio
+async def test_trade_stock_paper_output_is_unchanged(mock_infra):
+    from skopaq.broker.models import ExecutionResult
+
+    filled = await _trade(mock_infra, ExecutionResult(
+        success=True, mode="paper", fill_price=2500.0, slippage=0.5), mode="paper")
+    refused = await _trade(mock_infra, ExecutionResult(
+        success=False, mode="paper", rejection_reason="No short sales"), mode="paper")
+
+    assert "- Execution: Filled (paper mode)\n- Fill Price: ₹2,500.00\n- Slippage: 0.5000" \
+        in filled
+    assert "Orders" not in filled
+    assert "- Execution: Rejected (paper mode)\n- Reason: No short sales" in refused

@@ -525,3 +525,152 @@ class TestNoShortSale:
 
         holdings = [Holding(symbol="RELIANCE", quantity=10)]
         assert self._validate(_sell_order(qty=15), positions=_held(qty=5), holdings=holdings).passed
+
+
+class TestNoShortSaleWithOpenOrders:
+    """Live SELLs: open SELL orders and fills positions don't show yet are subtracted,
+    and an unreadable order book refuses the SELL (``sell_context``)."""
+
+    READ_AT = datetime(2026, 9, 25, 15, 21, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+
+    def _checker(self):
+        return SafetyChecker(rules=SafetyRules(
+            market_hours_only=False, require_stop_loss=False, max_lots_per_position=10000,
+            max_order_value_inr=10_000_000, max_position_pct=1.0,
+        ))
+
+    def _context(self, *rows, error="", override=False, own_recent=0):
+        from decimal import Decimal
+
+        from skopaq.broker.order_status import parse_order_book
+        from skopaq.execution.sellable import SellContext
+
+        return SellContext(orders=parse_order_book(list(rows)), read_at=self.READ_AT,
+                           error=error, override=override,
+                           own_recent_exit_qty=Decimal(own_recent))
+
+    def _validate(self, order, context, positions=(), holdings=None):
+        funds = Funds(available_margin=1_000_000)
+        return self._checker().validate(
+            order, None, list(positions), funds, 1_000_000, holdings=holdings,
+            sell_context=context,
+        )
+
+    @staticmethod
+    def _order(qty, side=Side.SELL, symbol="TCS", order_type=OrderType.MARKET):
+        return OrderRequest(symbol=symbol, side=side, quantity=qty, order_type=order_type,
+                            price=None if order_type == OrderType.MARKET else 100.0,
+                            security_id="11536")
+
+    @staticmethod
+    def _position(qty, product="CNC", sell=0):
+        return Position(symbol="TCS", security_id="11536", quantity=qty, product=product,
+                        sell_quantity=sell)
+
+    def test_an_open_sell_is_subtracted_and_named(self):   # T7
+        from tests.unit.execution._fakes import row
+
+        context = self._context(row("O-PENDING", traded=0, requested=6, id="EQ-7"))
+        refused = self._validate(self._order(5), context, positions=[self._position(10)])
+        passed = self._validate(self._order(4), context, positions=[self._position(10)])
+
+        assert not refused.passed
+        [reason] = refused.rejections
+        assert reason == ("No short sales: SELL 5 TCS but only 10 held, "
+                          "6 in open SELL orders (EQ-7 O-PENDING)")
+        assert refused.codes == ["open-sell"]
+        assert refused.blocking_order_ids == ["EQ-7"]
+        assert passed.passed, passed.rejections
+
+    def test_only_the_open_remainder_of_a_working_sell_counts(self):
+        from tests.unit.execution._fakes import row
+
+        # 4 of 10 traded and already shown in positions (sell_qty 4): 6 remain pending
+        context = self._context(row("PARTIALLY FILLED", traded=4, requested=10, id="EQ-1"))
+        result = self._validate(self._order(1), context,
+                                positions=[self._position(6, sell=4)])
+        assert any("6 in open SELL orders" in r for r in result.rejections)
+
+    def test_an_unreadable_book_refuses_the_sell(self):   # T8
+        result = self._validate(self._order(5), self._context(error="HTTP 503"),
+                                positions=[self._position(10)])
+
+        assert not result.passed
+        [reason] = result.rejections
+        assert reason.startswith("Cannot read the broker's order book (HTTP 503)")
+        assert "SKOPAQ_ALLOW_SELL_WITHOUT_ORDER_BOOK" in reason
+        assert result.codes == ["book-unreadable"]
+
+    def test_an_unreadable_book_does_not_affect_buys(self):   # T8
+        buy = self._order(1, side=Side.BUY, order_type=OrderType.LIMIT)
+        assert self._validate(buy, self._context(error="HTTP 503")).passed
+
+    def test_option_sells_are_still_the_naked_options_checks_business(self):   # T8
+        option = self._order(1, symbol="NIFTY23DEC21000CE")
+        result = self._validate(option, self._context(error="HTTP 503"))
+        assert result.rejections == [
+            "Naked option selling is forbidden. Ensure a protective position exists."]
+        assert result.codes == ["safety"]
+
+    def test_the_override_checks_without_the_book_and_says_so(self, caplog):   # T9
+        import logging
+
+        with caplog.at_level(logging.CRITICAL, logger="skopaq.execution.safety_checker"):
+            passed = self._validate(self._order(10), self._context(override=True),
+                                    positions=[self._position(10)])
+            refused = self._validate(self._order(11), self._context(override=True),
+                                     positions=[self._position(10)])
+
+        assert passed.passed, passed.rejections
+        assert refused.codes == ["no-short-sale"]
+        critical = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert len(critical) == 2
+        assert "WITHOUT the order book" in critical[0].getMessage()
+
+    def test_fills_positions_do_not_show_yet_are_subtracted(self):
+        from tests.unit.execution._fakes import row
+
+        filled = row("SUCCESS", traded=10, requested=10, id="EQ-1",
+                     updated_at=self.READ_AT.isoformat())
+        result = self._validate(self._order(10), self._context(filled),
+                                positions=[self._position(10)])
+
+        assert result.rejections == [
+            "No short sales: SELL 10 TCS but only 10 held, 10 sold but not yet in positions"]
+        assert result.codes == ["unshown-fill"]
+
+    def test_intraday_rows_do_not_count_for_a_cnc_sell_and_the_message_says_so(self):
+        result = self._validate(self._order(5), self._context(),
+                                positions=[self._position(5, product="INTRADAY")])
+        assert result.rejections == [
+            "No short sales: SELL 5 TCS but only 0 held (not counted: 5 INTRADAY position)"]
+        assert result.codes == ["no-short-sale"]
+
+    def test_holdings_count(self):
+        from skopaq.broker.models import Holding
+
+        holdings = [Holding(symbol="TCS", security_id="11536", quantity=5)]
+        assert self._validate(self._order(5), self._context(), holdings=holdings).passed
+
+    def test_without_a_context_the_check_is_unchanged(self):   # T10
+        order = _sell_order(qty=20)
+        today = TestNoShortSale()._validate(order, positions=_held(qty=10))
+        explicit = self._checker().validate(order, None, _held(qty=10),
+                                            Funds(available_margin=1_000_000), 1_000_000,
+                                            sell_context=None)
+        assert today.rejections == explicit.rejections == [
+            "No short sales: SELL 20 RELIANCE but only 10 held"]
+        assert explicit.codes == ["no-short-sale"]
+
+    def test_codes_follow_the_rejections(self):
+        checker = SafetyChecker(rules=SafetyRules(
+            market_hours_only=False, require_stop_loss=False, max_orders_per_minute=1))
+        funds = Funds(available_margin=1_000_000)
+        first = checker.validate(self._order(1), None, [self._position(10)], funds, 1_000_000,
+                                 sell_context=self._context())
+        second = checker.validate(self._order(20), None, [self._position(10)], funds,
+                                  1_000_000, sell_context=self._context())
+
+        assert first.passed and first.codes == []
+        assert second.codes == ["no-short-sale", "safety"]   # the order rate
+        assert len(second.codes) == len(second.rejections)

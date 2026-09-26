@@ -457,14 +457,21 @@ async def check_safety(
         symbol=symbol, action=side.upper(), confidence=50,
         entry_price=price if price else None, reasoning="Safety check",
     )
-    positions = await router.get_positions()
-    holdings = await router.get_settled_holdings()
+    # A live SELL is checked against the broker's open orders (read before
+    # positions); None in paper, where today's reads apply
+    inputs = await router.sell_inputs(order) if order.side == Side.SELL else None
+    if inputs is None:
+        positions = await router.get_positions()
+        holdings = await router.get_settled_holdings()
+    else:
+        positions, holdings = inputs.positions, inputs.holdings
     funds = await router.get_funds()
 
     result = safety.validate(
         order, signal, positions, funds,
         funds.available_cash + funds.used_margin,
         holdings=holdings,
+        sell_context=inputs.context if inputs is not None else None,
     )
 
     return json.dumps({
@@ -580,7 +587,10 @@ async def place_order(
     """Place a paper or live order through the safety checker and order router.
 
     Paper mode is the default. Live mode requires explicit config change.
-    All orders pass through the SafetyChecker before execution.
+    All orders pass through the SafetyChecker before execution. This server's
+    order router has no live INDstocks client, so its orders go to the paper
+    engine (no SELL lock, no order-book read); with a live client a SELL would
+    hold its symbol's lock and be checked against the broker's open orders.
 
     Args:
         symbol: Stock symbol (e.g. RELIANCE).
@@ -589,6 +599,7 @@ async def place_order(
         price: Limit price (0 = market order).
         order_type: MARKET or LIMIT.
     """
+    import contextlib
     from decimal import Decimal
 
     from skopaq.broker.models import (
@@ -596,9 +607,15 @@ async def place_order(
         OrderType,
         Side,
         TradingSignal,
+        filled_quantity_of,
+        is_remaining_open,
+        order_ids_of,
+        outcome_of,
     )
     from skopaq.constants import PAPER_SAFETY_RULES, SAFETY_RULES
+    from skopaq.execution.executor import alert_sell_refused
     from skopaq.execution.safety_checker import SafetyChecker
+    from skopaq.execution.sell_lock import SellLockBusy
 
     config = _get_config()
     router = _get_router()
@@ -636,31 +653,54 @@ async def place_order(
         reasoning="Placed via Claude Code MCP",
     )
 
-    # Safety check first
-    positions = await router.get_positions()
-    holdings = await router.get_settled_holdings()
-    funds = await router.get_funds()
-    safety_result = safety.validate(
-        order, signal, positions, funds,
-        funds.available_cash + funds.used_margin,
-        holdings=holdings,
-    )
+    # Safety check first, then execute. A live SELL holds its symbol's lock from
+    # the order-book read until the broker's answer is final (as the Executor)
+    lock = router.sell_lock(order) if order.side == Side.SELL else None
+    try:
+        async with lock or contextlib.nullcontext():
+            inputs = await router.sell_inputs(order) if order.side == Side.SELL else None
+            if inputs is None:
+                positions = await router.get_positions()
+                holdings = await router.get_settled_holdings()
+            else:
+                positions, holdings = inputs.positions, inputs.holdings
+            funds = await router.get_funds()
+            safety_result = safety.validate(
+                order, signal, positions, funds,
+                funds.available_cash + funds.used_margin,
+                holdings=holdings,
+                sell_context=inputs.context if inputs is not None else None,
+            )
 
-    if not safety_result.passed:
-        return json.dumps({
-            "success": False,
-            "reason": f"Safety check failed: {safety_result.reason}",
-        })
+            if not safety_result.passed:
+                if inputs is not None:
+                    alert_sell_refused(
+                        order, safety_result.codes[0] if safety_result.codes else "safety",
+                        safety_result.reason, safety_result.blocking_order_ids)
+                return json.dumps({
+                    "success": False,
+                    "reason": f"Safety check failed: {safety_result.reason}",
+                })
 
-    # Execute
-    result = await router.execute(order, signal)
+            result = await router.execute(order, signal)
+    except SellLockBusy:
+        reason = f"Another Skopaq process is already selling {symbol} — not sending a second SELL"
+        alert_sell_refused(order, "lock-busy", reason)
+        return json.dumps({"success": False, "reason": reason})
 
+    filled = filled_quantity_of(result, order.quantity if result.success else Decimal(0))
     return json.dumps({
         "success": result.success,
         "mode": result.mode,
         "fill_price": result.fill_price,
         "slippage": result.slippage,
         "rejection_reason": result.rejection_reason or "",
+        # What the broker confirmed (paper: the whole order, or nothing)
+        "filled_quantity": int(filled) if filled == int(filled) else float(filled),
+        "outcome": outcome_of(result),
+        "order_ids": order_ids_of(result),
+        "remaining_open": is_remaining_open(result),
+        "fill_unconfirmed": getattr(result, "fill_unconfirmed", False) is True,
     })
 
 
