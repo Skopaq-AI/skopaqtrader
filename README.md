@@ -446,7 +446,33 @@ Add to your `~/.claude.json` (or run `/mcp add` in Claude Code):
 
 Open Claude Code in the `skopaqtrader` directory. The MCP server starts automatically. You'll see 18 trading tools available.
 
-### Custom Slash Commands (Skills)
+### Optional: You.com Web Search MCP
+
+For web research alongside trading tools, add a remote MCP server entry for You.com. This provides `you-search` and `you-contents` tools for researching market news, company filings, sector trends, and economic data.
+
+Update `.claude/.mcp.json` to include the `youcom` server:
+
+```json
+{
+  "mcpServers": {
+    "skopaq": {
+      "command": "python3",
+      "args": ["-m", "skopaq.mcp_server"]
+    },
+    "youcom": {
+      "description": "Optional You.com web search for research and news",
+      "url": "https://api.you.com/mcp"
+    }
+  }
+}
+```
+
+The entry is already present in the project's `.claude/.mcp.json`. You can use it in two modes:
+
+- **Keyless** (no account needed): Use `https://api.you.com/mcp?profile=free`
+- **Authenticated** (higher rate limits): Set `export YDC_API_KEY="your-key"` and use `https://api.you.com/mcp`
+
+Get an API key at [you.com/platform/api-keys](https://you.com/platform/api-keys).
 
 These are pre-built in `.claude/skills/` and available immediately:
 
