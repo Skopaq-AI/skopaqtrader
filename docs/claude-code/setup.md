@@ -89,6 +89,36 @@ Read-only tools (quotes, positions, status) are auto-allowed. Tools that modify 
 | `analyze_stock`, `scan_market`, `check_safety` | `suggest_option_trade` |
 | `gather_*` data tools, `recall_agent_memories`, `quick_decision` | `save_trade_reflection` |
 
+## Optional: You.com Web Search MCP
+
+For web research alongside trading tools, SkopaqTrader's `.claude/.mcp.json` includes an optional You.com remote MCP server entry. This provides `you-search` and `you-contents` tools for researching market news, company filings, sector trends, and economic data.
+
+The entry is already present in the project config:
+
+```json
+{
+  "mcpServers": {
+    "skopaq": {
+      "command": "python3",
+      "args": ["-m", "skopaq.mcp_server"]
+    },
+    "youcom": {
+      "description": "Optional You.com web search for research and news",
+      "url": "https://api.you.com/mcp"
+    }
+  }
+}
+```
+
+You can use it in two modes:
+
+- **Keyless** (no account needed): Use `https://api.you.com/mcp?profile=free`
+- **Authenticated** (higher rate limits): Set `export YDC_API_KEY="your-key"` and keep `https://api.you.com/mcp`
+
+Get an API key at [you.com/platform/api-keys](https://you.com/platform/api-keys).
+
+Example workflow: ask Claude to "search recent news about Nifty 50 banking stocks with you-search" alongside your trading analysis. The You.com MCP server is keyless-capable, so you can try it immediately without signing up.
+
 ## Next Steps
 
 - Browse all [MCP Tools](mcp-tools.md)

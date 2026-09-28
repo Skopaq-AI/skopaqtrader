@@ -3,6 +3,10 @@
     "skopaq": {
       "command": "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3",
       "args": ["-m", "skopaq.mcp_server"]
+    },
+    "youcom": {
+      "description": "Optional You.com web search MCP server. Provides you-search and you-contents tools for web research.",
+      "url": "https://api.you.com/mcp"
     }
   }
 }
