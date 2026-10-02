@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from skopaq.agents.sell_analyst import SellDecision, analyze_exit
+from skopaq.execution.daemon import _IST
 from tests.unit.execution._fakes import Script
 from tests.unit.execution.test_position_monitor_live import (  # noqa: F401
     INFY,
@@ -197,8 +199,14 @@ async def test_the_paper_monitor_does_not_hang_on_a_stopiteration_in_its_ai_chec
 
     client = MagicMock()
     client.get_ltp = get_ltp
+    # Pin the clock to mid-session. The monitor reads the wall clock for its EOD
+    # exit, so without this the position is force-closed on the first cycle any
+    # time the test runs at or after (close - monitor_eod_exit_minutes_before_close),
+    # and the assertion below fails for reasons that have nothing to do with the
+    # AI tier it is meant to cover.
     monitor = PositionMonitor(executor, client, router, cfg, _stopiteration_llm(), stop,
-                              ai_enabled=True)
+                              ai_enabled=True,
+                              wall=lambda: datetime(2026, 1, 5, 11, 0, tzinfo=_IST))
 
     async def scrip(client, symbol, exchange="NSE"):
         return "NSE_TCS"
