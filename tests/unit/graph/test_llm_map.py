@@ -14,7 +14,8 @@ def llms():
 
 
 def _setup(llms, llm_map=None):
-    return GraphSetup(llms["quick"], llms["deep"], ConditionalLogic(), llm_map=llm_map)
+    # max_tool_rounds is upstream v0.5.2's per-analyst tool-call cap.
+    return GraphSetup(llms["quick"], llms["deep"], ConditionalLogic(), 3, llm_map=llm_map)
 
 
 def test_role_in_map_wins(llms):

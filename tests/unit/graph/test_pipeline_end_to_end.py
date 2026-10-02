@@ -113,7 +113,9 @@ def offline(monkeypatch):
     monkeypatch.setattr(sentiment_analyst, "fetch_reddit_posts", lambda *a, **k: "no posts")
     monkeypatch.setattr(yahoo_market.yf, "Ticker",
                         lambda s: type("T", (), {"info": {"longName": "Reliance Industries"}})())
-    context.resolve_instrument_identity.cache_clear()
+    # v0.5.2 caches the vendor lookup in _identity (lru_cache); the public
+    # resolve_instrument_identity is a plain fail-open wrapper.
+    context._identity.cache_clear()
     return called
 
 
@@ -152,8 +154,10 @@ async def test_equity_run_uses_role_llms_and_nse_ticker(tmp_path, monkeypatch, o
     assert result.signal.confidence == 77
     assert claude.structured_calls == [schemas.PortfolioDecision]
     assert schemas.PortfolioDecision not in gemini.structured_calls
-    # INDstocks serves prices; yfinance calls get the .NS suffix added
-    assert ("get_stock_data", "indstocks", "RELIANCE") in offline
+    # INDstocks serves prices. Since v0.5.2 the price tools take their symbol
+    # from state (InjectedState), so every vendor sees the same
+    # exchange-qualified ticker; the vendor strips the suffix it doesn't want.
+    assert ("get_stock_data", "indstocks", "RELIANCE.NS") in offline
     assert ("get_indicators", "yfinance", "RELIANCE.NS") in offline
     # Upstream itself ran on the exchange-qualified ticker
     assert result.agent_state["company_of_interest"] == "RELIANCE.NS"
@@ -195,14 +199,10 @@ class RecordingModel(ScriptedModel):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parallel", [True, False], ids=["parallel", "sequential"])
-async def test_each_analyst_sees_only_its_own_tool_results(
-    tmp_path, monkeypatch, offline, parallel
-):
+async def test_each_analyst_sees_only_its_own_tool_results(tmp_path, monkeypatch, offline):
     model = RecordingModel(confidence=60)
     graph = _skopaq_graph(tmp_path, monkeypatch, {"_default": model},
-                          asset_class="crypto", yfinance_symbol_suffix="",
-                          parallel_analysts=parallel)
+                          asset_class="crypto", yfinance_symbol_suffix="")
 
     result = await graph.analyze("BTC-USD", TRADE_DATE)
 
@@ -220,8 +220,9 @@ def test_parallel_graph_fans_out_and_joins(monkeypatch):
     from tradingagents.graph.conditional_logic import ConditionalLogic
     from tradingagents.graph.setup import GraphSetup
 
-    setup = GraphSetup(MagicMock(), MagicMock(), ConditionalLogic())
-    graph = setup.setup_graph(["market", "social", "news", "fundamentals"], parallel=True).compile()
+    # max_tool_rounds is upstream v0.5.2's per-analyst tool-call cap.
+    setup = GraphSetup(MagicMock(), MagicMock(), ConditionalLogic(), 3)
+    graph = setup.setup_graph(["market", "social", "news", "fundamentals"]).compile()
 
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     for analyst in ("Market Analyst", "Sentiment Analyst", "News Analyst", "Fundamentals Analyst"):

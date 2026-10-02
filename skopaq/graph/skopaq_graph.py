@@ -102,9 +102,10 @@ class SkopaqTradingGraph:
         from tradingagents.graph import TradingAgentsGraph
 
         # Upstream reads its required keys (results_dir, data_cache_dir, ...)
-        # straight from config, so fill whatever the caller left out. Analysts
-        # run side by side unless the caller sets parallel_analysts=False.
-        config = {**DEFAULT_CONFIG, "parallel_analysts": True, **self._upstream_config}
+        # straight from config, so fill whatever the caller left out. The analysts
+        # run side by side: upstream v0.5.2 made that the only layout, so
+        # there is no option left to turn it off.
+        config = {**DEFAULT_CONFIG, **self._upstream_config}
         llm_map = config.pop("llm_map", None)
 
         self._graph = TradingAgentsGraph(
@@ -361,7 +362,7 @@ class SkopaqTradingGraph:
         import numpy as np
 
         from tradingagents.dataflows.vendors.yahoo.market import get_closes
-        from tradingagents.graph.settlement import resolve_benchmark
+        from tradingagents.memory.settlement import resolve_benchmark
 
         today = date.today().isoformat()
         pending = [e for e in graph.memory_log.get_pending_entries() if e["ticker"] == ticker]
@@ -455,21 +456,20 @@ class SkopaqTradingGraph:
         reasoning = decision_str[:500]
 
         if isinstance(state, dict):
-            # The risk management node may include a confidence indicator
+            # The Portfolio Manager's rendered decision carries its own
+            # **Confidence** line; upstream v0.5.2 keeps it at the top level
+            # and no longer mirrors it into risk_debate_state.
+            full_decision = state.get("final_trade_decision", "")
             risk_state = state.get("risk_debate_state", {})
             if isinstance(risk_state, dict):
-                confidence = _extract_confidence(risk_state)
+                confidence = _extract_confidence(
+                    {**risk_state, "judge_decision": full_decision}
+                )
                 logger.debug("Signal confidence for %s: %d", symbol, confidence)
-                # Judge decision has the richest reasoning
-                judge = risk_state.get("judge_decision", "")
-                if judge and len(str(judge).strip()) > len(action):
-                    reasoning = str(judge).strip()[:2000]
 
-            # Fall back to the full unprocessed trade decision
-            if reasoning == decision_str[:500]:
-                full_decision = state.get("final_trade_decision", "")
-                if full_decision and len(str(full_decision).strip()) > len(action):
-                    reasoning = str(full_decision).strip()[:2000]
+            # The judge's own text is the richest reasoning.
+            if full_decision and len(str(full_decision).strip()) > len(action):
+                reasoning = str(full_decision).strip()[:2000]
 
         # Pick exchange based on asset class in upstream config
         asset_class = self._upstream_config.get("asset_class", "equity")
@@ -515,6 +515,8 @@ def _extract_confidence(risk_state: dict[str, Any]) -> int:
     4. Fallback: 50 (graceful degradation).
     """
     # --- Priority 1: Parse from judge_decision text ---
+    # v0.5.2 dropped judge_decision from RiskDebateState; the Portfolio
+    # Manager's decision moved to the top-level final_trade_decision.
     judge_text = risk_state.get("judge_decision", "")
     if judge_text:
         # Normalise: extract_text handles Gemini list-of-dicts format

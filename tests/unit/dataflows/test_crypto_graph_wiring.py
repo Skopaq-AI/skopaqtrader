@@ -50,7 +50,6 @@ class TestAnalystExecutionPlan:
         spec = ANALYST_NODE_SPECS[key]
         assert spec.report_key == report_key
         assert {t.name for t in spec.tools} == tools
-        assert spec.tool_node == f"tools_{key}"
 
     def test_crypto_plan_builds(self):
         from tradingagents.graph.analyst_execution import build_analyst_execution_plan
@@ -80,13 +79,13 @@ class TestGraphCompiles:
         monkeypatch.setattr(setup_module, "create_onchain_analyst", spy)
         quick, deep, onchain_llm = MagicMock(), MagicMock(), MagicMock()
         setup = setup_module.GraphSetup(
-            quick, deep, ConditionalLogic(), llm_map={"onchain_analyst": onchain_llm}
+            quick, deep, ConditionalLogic(), 3, llm_map={"onchain_analyst": onchain_llm}
         )
         graph = setup.setup_graph(
             ["market", "social", "news", "fundamentals", "onchain", "defi", "funding"]
         ).compile()
 
-        for node in ("Onchain Analyst", "tools_onchain", "Defi Analyst", "Funding Analyst"):
+        for node in ("Onchain Analyst", "Defi Analyst", "Funding Analyst"):
             assert node in graph.nodes
         assert received["onchain"] is onchain_llm
 

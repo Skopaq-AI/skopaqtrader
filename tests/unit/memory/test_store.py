@@ -17,7 +17,7 @@ from skopaq.memory.store import (
     MemoryStore,
     merge_entries,
 )
-from tradingagents.decision_log import TradingMemoryLog
+from tradingagents.memory.log import TradingMemoryLog
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -233,7 +233,14 @@ class TestRealizedOutcome:
                 raise RuntimeError("yahoo down")
             monkeypatch.setattr(market, "get_closes", no_prices)
         else:
-            monkeypatch.setattr(market, "get_closes", lambda *_: pd.Series(closes))
+            # v0.5.2 settles by calendar day: it matches the benchmark to the
+            # stock's entry/exit days with asof(), so the series need real
+            # dates, and the benchmark needs a close through the exit.
+            start = pd.Timestamp("2026-08-24")
+            days = pd.bdate_range(start, periods=len(closes))
+            frame = pd.Series(closes, index=days)
+            # Same dates, a flat benchmark: alpha then equals raw.
+            monkeypatch.setattr(market, "get_closes", lambda *_: frame.copy())
 
         upstream = MagicMock()
         upstream.memory_log = TradingMemoryLog({"memory_log_path": str(tmp_path / "log.md")})

@@ -54,21 +54,18 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
     "onchain": AnalystNodeSpec(
         key="onchain",
         agent_node="Onchain Analyst",
-        clear_node="Msg Clear Onchain",
         report_key="onchain_report",
         tools=onchain_analyst.TOOLS,
     ),
     "defi": AnalystNodeSpec(
         key="defi",
         agent_node="Defi Analyst",
-        clear_node="Msg Clear Defi",
         report_key="defi_report",
         tools=defi_analyst.TOOLS,
     ),
     "funding": AnalystNodeSpec(
         key="funding",
         agent_node="Funding Analyst",
-        clear_node="Msg Clear Funding",
         report_key="funding_report",
         tools=funding_analyst.TOOLS,
     ),
