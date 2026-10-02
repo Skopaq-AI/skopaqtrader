@@ -4,7 +4,7 @@ from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.errors import (
     NoMarketDataError,
     VendorNotConfiguredError,
-    VendorRateLimitError,
+    VendorUnavailableError,
 )
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
@@ -18,7 +18,6 @@ from tradingagents.dataflows.vendors.alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
 )
 from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macro_data
-from tradingagents.dataflows.vendors.indstocks import get_stock_data_indstocks
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
@@ -87,15 +86,6 @@ TOOLS_CATEGORIES = {
     }
 }
 
-VENDOR_LIST = [
-    "indstocks",  # Skopaq: INDstocks broker API, NSE equities
-    "yfinance",
-    "sec_edgar",
-    "fred",
-    "polymarket",
-    "alpha_vantage",
-]
-
 # Optional enrichment categories. These add macro/event context to the news
 # analyst but are not core to a decision, so a vendor failure here degrades to a
 # sentinel instead of aborting the run (a bad LLM-supplied indicator, a missing
@@ -107,7 +97,6 @@ OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
-        "indstocks": get_stock_data_indstocks,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
@@ -184,6 +173,30 @@ def get_vendor(category: str, method: str = None) -> str:
     return config.get("data_vendors", {}).get(category, "default")
 
 
+def vendor_unavailable(method: str, error: Exception) -> str:
+    """What a call returns when every vendor was throttled or unreachable."""
+    return (
+        f"DATA_UNAVAILABLE: no configured vendor could serve {method} right now "
+        f"({error}). This says nothing about the instrument; report the "
+        f"data as unavailable and do not estimate or fabricate values."
+    )
+
+
+def no_data_available(error: NoMarketDataError) -> str:
+    """What a call returns when every vendor that answered had no usable data."""
+    resolved = "" if error.canonical == error.symbol else f" (resolved to '{error.canonical}')"
+    # Surface the typed error's detail (e.g. "latest row is 2025-06-11 ...
+    # stale") so the agent sees the specific reason — invalid symbol, no
+    # coverage, or stale data — not just a generic "unavailable".
+    reason = f" ({error.detail})" if error.detail else ""
+    return (
+        f"NO_DATA_AVAILABLE: No usable market data for '{error.symbol}'{resolved} from "
+        f"any configured vendor{reason}. The symbol may be invalid, delisted, "
+        f"not covered, or the vendor returned stale data. Do not estimate or "
+        f"fabricate values — report that data is unavailable for this symbol."
+    )
+
+
 def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
     category = get_category_for_method(method)
@@ -212,18 +225,16 @@ def route_to_vendor(method: str, *args, **kwargs):
         vendor_chain = all_available_vendors
 
     last_no_data: NoMarketDataError | None = None
-    last_unavailable: VendorRateLimitError | None = None
+    last_unavailable: VendorUnavailableError | None = None
+    failed: Exception | None = None     # a vendor that raised something untyped
     first_error: Exception | None = None
     for vendor in vendor_chain:
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
-        # Skopaq: yfinance needs an exchange suffix for non-US symbols (.NS).
-        call_args = _apply_yfinance_suffix(args, method) if vendor == "yfinance" else args
-
         try:
-            return impl_func(*call_args, **kwargs)
-        except VendorRateLimitError as e:
+            return impl_func(*args, **kwargs)
+        except VendorUnavailableError as e:
             logger.warning("Vendor %r unavailable for %s: %s; trying next vendor.", vendor, method, e)
             # Kept so an all-unavailable chain can say the vendor was the
             # problem, rather than reporting nothing about the symbol.
@@ -244,9 +255,19 @@ def route_to_vendor(method: str, *args, **kwargs):
             logger.warning("Vendor %r failed for %s: %s", vendor, method, e)
             if first_error is None:
                 first_error = e
+            failed = e
             continue
 
-    # If any vendor reported "no data", the symbol is genuinely unavailable.
+    # A vendor that throttled or failed the request never said whether it has
+    # the symbol, so no other vendor's "no data" can speak for the whole chain:
+    # report the vendors as the problem, not the instrument. It must not end
+    # the run either.
+    if last_unavailable is not None:
+        return vendor_unavailable(method, last_unavailable)
+    if failed is not None and last_no_data is not None:
+        return vendor_unavailable(method, failed)
+
+    # Every vendor that answered reported "no data": the symbol is genuinely unavailable.
     # Return one explicit, instructive sentinel rather than a vendor-specific
     # empty string, so the agent reports "unavailable" instead of inventing a
     # value. This takes precedence over incidental fallback errors.
@@ -258,33 +279,12 @@ def route_to_vendor(method: str, *args, **kwargs):
                 "Returning NO_DATA for %s, but a vendor errored earlier: %s",
                 method, first_error,
             )
-        sym = last_no_data.symbol
-        canonical = last_no_data.canonical
-        resolved = "" if canonical == sym else f" (resolved to '{canonical}')"
-        # Surface the typed error's detail (e.g. "latest row is 2025-06-11 ...
-        # stale") so the agent sees the specific reason — invalid symbol, no
-        # coverage, or stale data — not just a generic "unavailable".
-        reason = f" ({last_no_data.detail})" if last_no_data.detail else ""
-        return (
-            f"NO_DATA_AVAILABLE: No usable market data for '{sym}'{resolved} from "
-            f"any configured vendor{reason}. The symbol may be invalid, delisted, "
-            f"not covered, or the vendor returned stale data. Do not estimate or "
-            f"fabricate values — report that data is unavailable for this symbol."
-        )
+        return no_data_available(last_no_data)
 
     # No vendor returned data and none reported clean "no data" — surface the
     # first real error (e.g. the primary vendor's network failure). Optional
     # enrichment categories degrade to a sentinel instead, so flavour data can't
     # abort the run.
-    # Every vendor was throttled or unreachable: that is a fact about the
-    # vendors, not about the instrument, and it must not end the run.
-    if last_unavailable is not None:
-        return (
-            f"DATA_UNAVAILABLE: no configured vendor could serve {method} right now "
-            f"({last_unavailable}). This says nothing about the instrument; report the "
-            f"data as unavailable and do not estimate or fabricate values."
-        )
-
     if first_error is not None:
         if category in OPTIONAL_CATEGORIES:
             logger.warning("Optional %s unavailable for %s: %s", category, method, first_error)
@@ -295,28 +295,3 @@ def route_to_vendor(method: str, *args, **kwargs):
         raise first_error
 
     raise RuntimeError(f"No available vendor for '{method}'")
-
-
-# Skopaq: methods whose first positional argument is a ticker symbol.
-# get_global_news is excluded because its first arg is curr_date.
-_SYMBOL_ARG_METHODS = frozenset({
-    "get_stock_data", "get_indicators", "get_fundamentals",
-    "get_balance_sheet", "get_cashflow", "get_income_statement",
-    "get_news", "get_insider_transactions",
-})
-
-
-def _apply_yfinance_suffix(args: tuple, method: str) -> tuple:
-    """Append the configured ``yfinance_symbol_suffix`` to a bare symbol argument.
-
-    yfinance only recognises Indian NSE stocks with a ``.NS`` suffix
-    (``RELIANCE`` -> ``RELIANCE.NS``). An empty suffix, the default, changes
-    nothing, and a symbol that already carries it is left alone.
-    """
-    suffix = get_config().get("yfinance_symbol_suffix", "")
-    if not suffix or not args or method not in _SYMBOL_ARG_METHODS:
-        return args
-    symbol = args[0]
-    if isinstance(symbol, str) and not symbol.upper().endswith(suffix.upper()):
-        return (symbol + suffix,) + args[1:]
-    return args

@@ -41,7 +41,6 @@ class Propagator:
                     "bear_history": "",
                     "history": "",
                     "current_response": "",
-                    "judge_decision": "",
                     "count": 0,
                 }
             ),
@@ -55,7 +54,6 @@ class Propagator:
                     "current_aggressive_response": "",
                     "current_conservative_response": "",
                     "current_neutral_response": "",
-                    "judge_decision": "",
                     "count": 0,
                 }
             ),
@@ -63,9 +61,6 @@ class Propagator:
             "fundamentals_report": "",
             "sentiment_report": "",
             "news_report": "",
-            "onchain_report": "",
-            "defi_report": "",
-            "funding_report": "",
         }
 
     def get_graph_args(self, callbacks: list | None = None) -> dict[str, Any]:
