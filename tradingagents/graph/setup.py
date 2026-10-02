@@ -1,5 +1,8 @@
-from typing import Any
+import logging
+from collections import Counter
+from typing import Any, TypedDict
 
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -8,23 +11,22 @@ from tradingagents.agents import (
     create_bear_researcher,
     create_bull_researcher,
     create_conservative_debator,
-    create_defi_analyst,
     create_fundamentals_analyst,
-    create_funding_analyst,
     create_market_analyst,
-    create_msg_delete,
     create_neutral_debator,
     create_news_analyst,
-    create_onchain_analyst,
     create_portfolio_manager,
     create_research_manager,
     create_sentiment_analyst,
     create_trader,
 )
+from tradingagents.agents.analysts.turn import WRAP_UP
 from tradingagents.agents.state import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
 from .conditional_logic import ConditionalLogic
+
+logger = logging.getLogger(__name__)
 
 # Every target a shared conditional router can return. Each edge driven by the
 # router maps all of them, so a fall-through return (e.g. under prompt/i18n/
@@ -43,43 +45,49 @@ RISK_ANALYSIS_PATH_MAP = {
 }
 
 
-def _tools_or_clear(spec):
-    """Route an analyst's turn: run its tool calls, or finish its report."""
-    def route(state) -> str:
-        return spec.tool_node if state["messages"][-1].tool_calls else spec.clear_node
-    return route
+def _tools_or_done(state) -> str:
+    """Route an analyst's turn: run its tool calls, or finish with its report."""
+    return "tools" if state["messages"][-1].tool_calls else END
 
 
-def _isolated_analyst(spec, analyst_node):
-    """Skopaq: one analyst and its tool loop as a node with private messages.
+def _analyst_graph(spec, agent, max_tool_rounds: int):
+    """One analyst as a graph of its own: the model and its tools, on a private message history.
 
-    The analyst runs in its own compiled subgraph, seeded with the run's
-    opening message, so analysts running side by side never see (or route
-    on) each other's tool calls. Only the analyst's report reaches the main
-    graph's state.
+    It returns only its report, so analysts running side by side never write the
+    same key, and its tool calls never reach the other analysts' messages. After
+    ``max_tool_rounds`` rounds of tool calls it is told to write its report, and
+    that turn ends it whatever it answers, so a model that keeps calling tools
+    cannot run the graph into its recursion limit (#1420).
     """
-    sub = StateGraph(AgentState)
-    sub.add_node(spec.agent_node, analyst_node)
-    sub.add_edge(START, spec.agent_node)
-    if spec.tools:
-        sub.add_node(spec.tool_node, ToolNode(list(spec.tools)))
+    output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str})
+    graph = StateGraph(AgentState, output_schema=output)
+    graph.add_node("agent", agent)
+    graph.add_edge(START, "agent")
+    if not spec.tools:
+        graph.add_edge("agent", END)
+        return graph.compile()
 
-        def route(state) -> str:
-            return spec.tool_node if state["messages"][-1].tool_calls else END
+    def calls(messages):
+        return [call["name"] for m in messages for call in (getattr(m, "tool_calls", None) or [])]
 
-        sub.add_conditional_edges(spec.agent_node, route, [spec.tool_node, END])
-        sub.add_edge(spec.tool_node, spec.agent_node)
-    else:
-        sub.add_edge(spec.agent_node, END)
-    # checkpointer=False: never inherit the parent's checkpointer
-    compiled = sub.compile(checkpointer=False)
+    def rounds(messages) -> int:
+        return sum(1 for m in messages if getattr(m, "tool_calls", None))
 
-    def run(state, config) -> dict:
-        limit = (config or {}).get("recursion_limit", 100)
-        final = compiled.invoke(dict(state), {"recursion_limit": limit})
-        return {spec.report_key: final.get(spec.report_key, "")}
+    def more_or_wrap_up(state) -> str:
+        return "wrap_up" if rounds(state["messages"]) >= max_tool_rounds else "agent"
 
-    return run
+    def wrap_up(state):
+        repeated = ", ".join(f"{name} x{n}" for name, n in Counter(calls(state["messages"])).most_common())
+        logger.warning("%s used its %d tool rounds (%s); asking for its report",
+                       spec.agent_node, max_tool_rounds, repeated)
+        return agent({**state, "messages": [*state["messages"], HumanMessage(WRAP_UP)]})
+
+    graph.add_node("tools", ToolNode(list(spec.tools)))
+    graph.add_node("wrap_up", wrap_up)
+    graph.add_conditional_edges("agent", _tools_or_done, ["tools", END])
+    graph.add_conditional_edges("tools", more_or_wrap_up, ["agent", "wrap_up"])
+    graph.add_edge("wrap_up", END)
+    return graph.compile()
 
 
 class GraphSetup:
@@ -90,30 +98,16 @@ class GraphSetup:
         quick_thinking_llm: Any,
         deep_thinking_llm: Any,
         conditional_logic: ConditionalLogic,
-        llm_map: dict[str, Any] | None = None,
+        max_tool_rounds: int,
     ):
-        """Initialize with required components.
-
-        ``llm_map`` (Skopaq) optionally assigns an LLM per agent role, e.g.
-        ``{"market_analyst": gemini, "portfolio_manager": claude}``. A role
-        missing from the map uses ``_default``, then the quick/deep pair.
-        """
+        """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.conditional_logic = conditional_logic
-        self.llm_map = llm_map or {}
-
-    def _get_llm(self, *roles: str, deep: bool = False):
-        """The LLM for the first of ``roles`` in ``llm_map``, else the default."""
-        for role in roles:
-            if role in self.llm_map:
-                return self.llm_map[role]
-        if "_default" in self.llm_map:
-            return self.llm_map["_default"]
-        return self.deep_thinking_llm if deep else self.quick_thinking_llm
+        self.max_tool_rounds = max_tool_rounds
 
     def setup_graph(
-        self, selected_analysts=("market", "social", "news", "fundamentals"), parallel=False
+        self, selected_analysts=("market", "social", "news", "fundamentals")
     ):
         """Set up and compile the agent workflow graph.
 
@@ -123,51 +117,31 @@ class GraphSetup:
                 - "social": Sentiment analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
-                - "onchain" / "defi" / "funding": crypto analysts (Skopaq)
-            parallel (bool): Skopaq — run the analysts side by side, each with
-                private messages, and start the debate once all have reported.
-                The default runs them one after another, as upstream does.
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
-        llm = self._get_llm
         analyst_factories = {
-            "market": lambda: create_market_analyst(llm("market_analyst")),
-            "social": lambda: create_sentiment_analyst(llm("sentiment_analyst", "social_analyst")),
-            "news": lambda: create_news_analyst(llm("news_analyst")),
-            "fundamentals": lambda: create_fundamentals_analyst(llm("fundamentals_analyst")),
-            # Skopaq: crypto-specific analysts
-            "onchain": lambda: create_onchain_analyst(llm("onchain_analyst")),
-            "defi": lambda: create_defi_analyst(llm("defi_analyst")),
-            "funding": lambda: create_funding_analyst(llm("funding_analyst")),
+            "market": lambda: create_market_analyst(self.quick_thinking_llm),
+            "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
+            "news": lambda: create_news_analyst(self.quick_thinking_llm),
+            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
         }
 
-        bull_researcher_node = create_bull_researcher(llm("bull_researcher"))
-        bear_researcher_node = create_bear_researcher(llm("bear_researcher"))
-        research_manager_node = create_research_manager(llm("research_manager", deep=True))
-        trader_node = create_trader(llm("trader"))
+        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
+        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
+        research_manager_node = create_research_manager(self.deep_thinking_llm)
+        trader_node = create_trader(self.quick_thinking_llm)
 
-        aggressive_analyst = create_aggressive_debator(llm("aggressive_debator"))
-        neutral_analyst = create_neutral_debator(llm("neutral_debator"))
-        conservative_analyst = create_conservative_debator(llm("conservative_debator"))
-        # "risk_manager" is the role's name before upstream renamed it (v0.2.2).
-        portfolio_manager_node = create_portfolio_manager(
-            llm("portfolio_manager", "risk_manager", deep=True)
-        )
+        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
+        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
+        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
+        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
 
         workflow = StateGraph(AgentState)
 
-        if parallel:
-            for spec in plan.specs:
-                workflow.add_node(
-                    spec.agent_node, _isolated_analyst(spec, analyst_factories[spec.key]())
-                )
-        else:
-            for spec in plan.specs:
-                workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
-                workflow.add_node(spec.clear_node, create_msg_delete())
-                if spec.tools:
-                    workflow.add_node(spec.tool_node, ToolNode(list(spec.tools)))
+        for spec in plan.specs:
+            workflow.add_node(spec.agent_node,
+                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds))
 
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
@@ -178,14 +152,12 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
-        if parallel:
-            # Fan out to every analyst; the debate starts once all have reported.
-            for spec in plan.specs:
-                workflow.add_edge(START, spec.agent_node)
-            workflow.add_edge([spec.agent_node for spec in plan.specs], "Bull Researcher")
-        else:
-            workflow.add_edge(START, plan.specs[0].agent_node)
-            self._chain_analysts(workflow, plan)
+        # The analysts work at the same time; the research debate starts once
+        # every one of them has filed its report.
+        analysts = [spec.agent_node for spec in plan.specs]
+        for node in analysts:
+            workflow.add_edge(START, node)
+        workflow.add_edge(analysts, "Bull Researcher")
 
         # Both research-debate edges share the complete DEBATE_PATH_MAP (#1088).
         for debate_node in ("Bull Researcher", "Bear Researcher"):
@@ -207,20 +179,3 @@ class GraphSetup:
         workflow.add_edge("Portfolio Manager", END)
 
         return workflow
-
-    @staticmethod
-    def _chain_analysts(workflow, plan):
-        """Upstream's sequential analysts: each hands over to the next."""
-        for i, spec in enumerate(plan.specs):
-            if spec.tools:
-                workflow.add_conditional_edges(
-                    spec.agent_node, _tools_or_clear(spec), [spec.tool_node, spec.clear_node]
-                )
-                workflow.add_edge(spec.tool_node, spec.agent_node)
-            else:
-                workflow.add_edge(spec.agent_node, spec.clear_node)
-
-            # The last analyst hands over to the research debate.
-            last = i == len(plan.specs) - 1
-            following = "Bull Researcher" if last else plan.specs[i + 1].agent_node
-            workflow.add_edge(spec.clear_node, following)

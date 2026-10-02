@@ -18,7 +18,7 @@ so that:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -63,7 +63,7 @@ def _coerce_optional_float(value):
 # ---------------------------------------------------------------------------
 
 
-class PortfolioRating(str, Enum):
+class PortfolioRating(StrEnum):
     """5-tier rating used by the Research Manager and Portfolio Manager."""
 
     BUY = "Buy"
@@ -73,7 +73,7 @@ class PortfolioRating(str, Enum):
     SELL = "Sell"
 
 
-class TraderAction(str, Enum):
+class TraderAction(StrEnum):
     """3-tier transaction direction used by the Trader.
 
     The Trader's job is to translate the Research Manager's investment plan
@@ -258,34 +258,11 @@ class PortfolioDecision(BaseModel):
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
-    # Skopaq: read by the position sizer and the minimum-confidence safety gate.
-    confidence: int | None = Field(
-        default=None,
-        description=(
-            "Conviction in the rating as a whole number from 0 (none) to 100 "
-            "(certain). Higher when the analysts agreed and the supporting data "
-            "is strong; lower when the call rests on thin or conflicting evidence."
-        ),
-    )
 
     @field_validator("price_target", mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
-
-    @field_validator("confidence", mode="before")
-    @classmethod
-    def _coerce_confidence(cls, v):
-        """A 0-100 integer, or None for anything that is not one number.
-
-        A value strictly between 0 and 1 is read as a fraction (0.82 -> 82).
-        """
-        number = _coerce_optional_float(v.rstrip("%") if isinstance(v, str) else v)
-        if not isinstance(number, (int, float)) or isinstance(number, bool):
-            return None
-        if 0 < number < 1:
-            number *= 100
-        return round(number) if 0 <= number <= 100 else None
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -308,9 +285,6 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     target = decision.price_target if decision.price_target is not None else "not provided"
     parts.extend(["", f"**Price Target**: {target}"])
     parts.extend(["", f"**Time Horizon**: {decision.time_horizon or 'not provided'}"])
-    # Skopaq: the confidence line skopaq_graph parses for position sizing.
-    confidence = decision.confidence if decision.confidence is not None else "not provided"
-    parts.extend(["", f"**Confidence**: {confidence}"])
     return "\n".join(parts)
 
 
@@ -319,7 +293,7 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
 # ---------------------------------------------------------------------------
 
 
-class SentimentBand(str, Enum):
+class SentimentBand(StrEnum):
     """Discrete sentiment direction produced by the Sentiment Analyst.
 
     Six tiers keep the signal granular enough to be actionable while remaining
