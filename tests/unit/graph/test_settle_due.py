@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tradingagents.decision_log import TradingMemoryLog
+from tradingagents.memory.log import TradingMemoryLog
 
 
 def _graph(tmp_path, store=None):

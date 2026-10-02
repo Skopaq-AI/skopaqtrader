@@ -227,7 +227,9 @@ class TestSkopaqGraphUpstreamCalls:
         graph = SkopaqTradingGraph(config, MagicMock(), memory_store=memory_store)
         upstream = MagicMock()
         upstream.propagate.return_value = (
-            {"risk_debate_state": {"judge_decision": "**Rating**: Overweight\n**Confidence**: 64"}},
+            # v0.5.2 keeps the Portfolio Manager's decision at the top
+            # level; risk_debate_state no longer carries judge_decision.
+            {"final_trade_decision": "**Rating**: Overweight\n**Confidence**: 64"},
             "Overweight",
         )
         graph._graph = upstream
