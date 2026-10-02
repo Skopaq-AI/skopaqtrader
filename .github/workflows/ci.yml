@@ -52,7 +52,7 @@ jobs:
         python: ["3.11", "3.14"]
     env:
       # The vendored base (UPSTREAM_CHANGES.md). Bump it with each upstream sync.
-      UPSTREAM_REF: f58a585390bb72f274b3361f55a1fb0d3f1a1c32
+      UPSTREAM_REF: 5eb50854dad299381861632aa34014448b4260fc
     steps:
       - uses: actions/checkout@v4
 

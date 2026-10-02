@@ -4,6 +4,44 @@ All notable changes to SkopaqTrader. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break things).
 
+## [Unreleased]
+
+Moves the vendored TradingAgents from v0.5.1 to **v0.5.2** (upstream commit
+`5eb5085`, 65 commits). No Skopaq-facing behaviour change beyond the notes
+below.
+
+### Breaking
+
+- **The `parallel_analysts` config key is gone.** Upstream v0.5.2 (#1255) made
+  the parallel analyst graph the only layout, using the same isolated-subgraph
+  design Skopaq had added behind that key. Config files still naming
+  `parallel_analysts` are ignored. Sequential analyst runs are no longer
+  available. Upstream also stops an analyst after `max_tool_rounds` and asks it
+  to write its report, so a model that keeps calling tools can no longer run
+  the graph into its recursion limit.
+- **Upstream requires Python 3.11+ and pandas 3.** Python is already 3.11+ here;
+  the pandas floor moves and is a real runtime change, not just a version
+  string.
+
+### Upstream changes worth knowing
+
+- `tradingagents.decision_log` → `tradingagents.memory.log`;
+  `tradingagents.graph.settlement` → `tradingagents.memory.settlement`;
+  `tradingagents.graph.reflection` → `tradingagents.memory.reflection`. No
+  action needed for CLI or config users.
+- The Portfolio Manager's decision is now the top-level `final_trade_decision`;
+  `judge_decision` left `RiskDebateState`.
+- The price and indicator tools take their ticker from state instead of from
+  the model, so every vendor now receives the exchange-qualified symbol
+  (`RELIANCE.NS`). The INDstocks vendor strips the suffix it does not want.
+
+### Internal
+
+- `VENDOR_LIST` is re-added by Skopaq; upstream deleted it in v0.5.2. See
+  [`UPSTREAM_CHANGES.md`](UPSTREAM_CHANGES.md) modification 2.
+- Verified against upstream's own suite: 1137 passed, identical to the
+  pristine v0.5.2 baseline. Skopaq's `tests/unit`: 1664 passed.
+
 ## [0.2.0] — 2026-09-26
 
 This release moves SkopaqTrader onto TradingAgents v0.5.1. It adds calibrated

@@ -551,7 +551,7 @@ print(decision)
 
 ```
 skopaqtrader/
-├── tradingagents/              # Vendored upstream (TradingAgents v0.5.1)
+├── tradingagents/              # Vendored upstream (TradingAgents v0.5.2)
 │   ├── agents/                 # Analyst, researcher, trader, risk agents
 │   │   ├── analysts/           # Market, news, social, fundamentals + crypto analysts
 │   │   ├── researchers/        # Bull/bear researchers
@@ -594,7 +594,7 @@ skopaqtrader/
 │   └── integration/            # Real API calls (requires .env)
 │
 ├── CLAUDE.md                   # AI agent project context
-├── UPSTREAM_CHANGES.md         # All modifications to vendored code (34 changes)
+├── UPSTREAM_CHANGES.md         # All modifications to vendored code (6 changes)
 ├── CONTRIBUTING.md             # Contribution guidelines
 ├── pyproject.toml              # Python project config
 ├── Dockerfile                  # One image: compose (Mac mini), Fly, Railway
@@ -700,7 +700,7 @@ Running 24/7 on a Mac mini: see [docs/deployment/mac-mini.md](docs/deployment/ma
 
 ## Upstream Modifications
 
-The vendored `tradingagents/` directory is upstream v0.5.1 (commit `f58a585`) plus the changes documented in [`UPSTREAM_CHANGES.md`](UPSTREAM_CHANGES.md), each marked `Skopaq:` in the source.
+The vendored `tradingagents/` directory is upstream v0.5.2 (commit `5eb5085`) plus the changes documented in [`UPSTREAM_CHANGES.md`](UPSTREAM_CHANGES.md), each marked `Skopaq:` in the source.
 
 **Modification philosophy:** Minimal, surgical changes. The upstream graph runs as a black box via `propagate()`. Skopaq wraps it with execution, safety, and multi-model tiering.
 
