@@ -3,7 +3,7 @@
 Documents every modification made to files under `tradingagents/`, vendored
 from [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents).
 
-**Upstream base:** v0.5.1 — commit `f58a585` (2026-09-24). Previous base: v0.2.0.
+**Upstream base:** v0.5.2 — commit `5eb5085` (2026-09-29). Previous bases: v0.5.1 (`f58a585`), v0.2.0.
 **Also vendored unmodified:** `cli/` (upstream's `tradingagents` CLI) and the example `main.py`.
 
 Every change is marked with a `Skopaq:` comment in the source. To see them all
@@ -11,7 +11,7 @@ against pristine upstream:
 
 ```bash
 git clone https://github.com/TauricResearch/TradingAgents /tmp/ta
-git -C /tmp/ta checkout f58a585
+git -C /tmp/ta checkout 5eb5085
 diff -ru -x __pycache__ /tmp/ta/tradingagents tradingagents
 diff -ru -x __pycache__ /tmp/ta/cli cli        # expected: no differences
 ```
@@ -48,6 +48,14 @@ diff -ru -x __pycache__ /tmp/ta/cli cli        # expected: no differences
   and raises `NoMarketDataError` on an empty result so the router can try
   the next configured vendor.
 - Registered first in `VENDOR_LIST` and in `VENDOR_METHODS["get_stock_data"]`.
+
+**At the v0.5.2 base, `VENDOR_LIST` is re-added by Skopaq.** Upstream deleted
+the list when it moved vendor preference into the per-method dicts. Skopaq
+brings it back with `indstocks` first, because
+`tests/unit/dataflows/test_indstocks_vendor.py` asserts both the membership
+and the ordering, and because the ordering is the readable statement of which
+vendor wins. The fallback chain itself is `VENDOR_METHODS`, whose insertion
+order upstream still honours.
 
 **Backward compatible:** yes — only used when a config names `indstocks`
 (Skopaq uses `"core_stock_apis": "indstocks,yfinance"`).
@@ -104,27 +112,32 @@ the minimum-confidence safety gate.
 **Backward compatible:** yes — optional field; the rendered decision gains
 one line, which upstream's rating parser ignores.
 
-### 6. Parallel analysts (opt-in)
+### 6. Parallel analysts — **retired at the v0.5.2 base**
 
-**Files:** `graph/setup.py`, `graph/trading_graph.py`, `default_config.py`
+This modification existed from the v0.2.0 base through v0.5.1: a
+`parallel_analysts` config key (default `False`) that switched
+`GraphSetup.setup_graph(..., parallel=True)`, each analyst running as its own
+compiled subgraph so they never saw each other's tool calls, and
+`_run_signature` appending `parallel=1` so a sequential checkpoint could not
+resume into the parallel graph.
 
-- New config key `parallel_analysts` (default `False`). When true,
-  `GraphSetup.setup_graph(..., parallel=True)` starts every selected analyst
-  at once and joins them before the Bull Researcher.
-- Each analyst and its tool loop run in their own compiled subgraph
-  (`_isolated_analyst`), seeded with the run's opening message, so analysts
-  never see or route on each other's tool calls; only the analyst's report
-  is written back. No `Msg Clear` nodes are needed in this mode.
-- `TradingAgentsGraph._run_signature` appends `parallel=1` in this mode, so
-  a checkpoint from a sequential run never resumes into the parallel graph
-  (whose nodes differ). Sequential signatures are unchanged.
+**Upstream shipped the same design in v0.5.2 (#1255) and made it the only
+mode.** Its `_analyst_graph` is the isolated-subgraph approach above, the
+`Msg Clear` nodes are gone, and `_run_signature` pins `analysts=parallel`
+itself. Skopaq's contribution is therefore fully redundant, so the
+modification was dropped rather than carried:
 
-**Why:** the analysts are independent, and running them together cuts
-analysis time (about 18% with the four equity analysts on the v0.2.0 base).
-The v0.2.0 fan-out shared one message list between analysts; the subgraphs
-avoid that. `SkopaqTradingGraph` turns it on.
-**Backward compatible:** yes — off by default; upstream's CLI and tests run
-the sequential graph unchanged.
+- the `parallel_analysts` config key is gone from `default_config.py`
+- `_isolated_analyst`, the `parallel` parameter and `_chain_analysts` are gone
+  from `graph/setup.py`
+- `skopaq/graph/skopaq_graph.py` no longer sets the key
+- `tests/unit/graph/test_checkpoint_signature.py` now asserts upstream's
+  `analysts=parallel` marker instead of Skopaq's
+
+What survives is upstream's improvement over the old Skopaq design: an
+analyst is stopped after `max_tool_rounds` and asked to write its report, so a
+model that keeps calling tools cannot run the graph into its recursion limit
+(#1420). Sequential runs are no longer available at any base from v0.5.2 on.
 
 ### 7. Jev endpoint from `TYPESAFE_BASE_URL`
 
@@ -151,19 +164,55 @@ unchanged, and upstream's `test_post_screen.py` passes as is.
 | Comma-separated indicator splitting | Upstream `get_indicators` does it |
 | Risk manager fundamentals typo fix | Upstream rewrote the agent (Portfolio Manager) |
 | Claude 4.6 in validators / CLI model lists | Upstream accepts unlisted model IDs |
-| Parallel analyst fan-out (reducers, `Done *` nodes) | Replaced by isolated per-analyst subgraphs (modification 6) |
+| Parallel analyst fan-out (reducers, `Done *` nodes) | Replaced by isolated per-analyst subgraphs, now upstream's own (modification 6) |
 | Crypto reports in memory lookups (managers, trader, reflection) | Upstream removed per-agent memories |
+| `parallel_analysts` config key and its sequential mode | Upstream v0.5.2 made the parallel graph the only layout (modification 6) |
 
 ## Syncing a newer upstream
 
-1. Import the new upstream `tradingagents/`, `cli/` and `main.py` verbatim
-   in one commit.
-2. Re-apply the modifications above in a second commit (search the old tree
-   for `Skopaq:`).
-3. Run upstream's test suite against the result: copy its `tests/` and
+1. Add or fetch the upstream remote and extract the tag you are moving to:
+
+   ```bash
+   git remote add upstream https://github.com/TauricResearch/TradingAgents.git
+   git fetch upstream --tags
+   git archive v0.5.2 | tar -x -C /tmp/ta-new     # the new base, pristine
+   git archive v0.5.1 | tar -x -C /tmp/ta-old     # the base we forked from
+   diff -ru -x __pycache__ /tmp/ta-old/tradingagents tradingagents > /tmp/skopaq.patch
+   ```
+
+   That `diff` is the complete record of local modifications; keep it until the
+   re-application is verified.
+
+2. Import the new upstream `tradingagents/`, `cli/` and `main.py` verbatim in
+   one commit. `cli/` and `main.py` are vendored unmodified, so a `diff -rq`
+   against the pristine tree must come back empty for both.
+3. Re-apply the modifications above in a second commit. Merge each file
+   three-way with the old base, the new upstream and the local version:
+
+   ```bash
+   git merge-file -p -L new-upstream -L old-upstream -L skopaq \
+       /tmp/ta-new/tradingagents/<file> /tmp/ta-old/tradingagents/<file> \
+       <local version> > merged.py
+   ```
+
+   `git merge-file` rewrites its **first argument in place** unless you pass
+   `-p`, and it exits non-zero on conflict. Check the result for `<<<<<<<`
+   markers rather than trusting the exit code alone. Files that merge cleanly
+   need no attention; the rest are read and fixed by hand.
+4. Run upstream's test suite against the result: copy its `tests/` and
    `pyproject.toml` next to symlinks of our `tradingagents/` and `cli/`, then
-   run `pytest tests -m "not integration"` there.
-4. Run `python3 -m pytest tests/unit/` — `tests/unit/graph/test_pipeline_end_to_end.py`
-   runs the whole graph offline and catches broken wiring.
-5. Update this file, and `UPSTREAM_REF` in `.github/workflows/ci.yml` (CI runs
-   step 3 on every pull request).
+   run `pytest tests -m "not integration"` there. Compare the result against
+   the same suite run on the pristine tree, so upstream's own
+   platform-specific failures are not mistaken for regressions.
+5. Run `python3 -m pytest tests/unit/` — `tests/unit/graph/test_pipeline_end_to_end.py`
+   runs the whole graph offline and catches broken wiring. Skopaq's own tests
+   are where renamed upstream APIs surface first, because they reach further
+   into upstream than the CLI does.
+6. Update this file, and `UPSTREAM_REF` in `.github/workflows/ci.yml` (CI runs
+   step 4 on every pull request).
+
+Steps 3 and 4 are where a sync actually fails. A clean `git merge-file` is not
+proof: a hunk can apply and still be wrong because the upstream function it
+touched was rewritten. Check for API moves in the diff
+(`git diff --stat old-base..new-base`) and look for each renamed or removed
+symbol before trusting the merge.
