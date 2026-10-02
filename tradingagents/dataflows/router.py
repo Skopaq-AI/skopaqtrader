@@ -18,6 +18,7 @@ from tradingagents.dataflows.vendors.alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
 )
 from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macro_data
+from tradingagents.dataflows.vendors.indstocks import get_stock_data_indstocks
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
@@ -93,10 +94,24 @@ TOOLS_CATEGORIES = {
 # categories (prices, fundamentals, news) still raise so a broken primary is loud.
 OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 
+# Skopaq: vendor preference order, highest priority first. Upstream v0.5.2
+# removed this list; Skopaq keeps it because INDstocks is registered ahead of
+# yfinance for Indian NSE equities, and VENDOR_METHODS preserves insertion
+# order for the per-method fallback chain.
+VENDOR_LIST = [
+    "indstocks",  # Skopaq: INDstocks broker API, NSE equities
+    "yfinance",
+    "sec_edgar",
+    "fred",
+    "polymarket",
+    "alpha_vantage",
+]
+
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "indstocks": get_stock_data_indstocks,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
@@ -233,7 +248,10 @@ def route_to_vendor(method: str, *args, **kwargs):
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
+            # Skopaq: yfinance needs an exchange suffix for non-US symbols (.NS).
+            call_args = _apply_yfinance_suffix(args, method) if vendor == "yfinance" else args
+
+            return impl_func(*call_args, **kwargs)
         except VendorUnavailableError as e:
             logger.warning("Vendor %r unavailable for %s: %s; trying next vendor.", vendor, method, e)
             # Kept so an all-unavailable chain can say the vendor was the
@@ -295,3 +313,28 @@ def route_to_vendor(method: str, *args, **kwargs):
         raise first_error
 
     raise RuntimeError(f"No available vendor for '{method}'")
+
+
+# Skopaq: methods whose first positional argument is a ticker symbol.
+# get_global_news is excluded because its first arg is curr_date.
+_SYMBOL_ARG_METHODS = frozenset({
+    "get_stock_data", "get_indicators", "get_fundamentals",
+    "get_balance_sheet", "get_cashflow", "get_income_statement",
+    "get_news", "get_insider_transactions",
+})
+
+
+def _apply_yfinance_suffix(args: tuple, method: str) -> tuple:
+    """Append the configured ``yfinance_symbol_suffix`` to a bare symbol argument.
+
+    yfinance only recognises Indian NSE stocks with a ``.NS`` suffix
+    (``RELIANCE`` -> ``RELIANCE.NS``). An empty suffix, the default, changes
+    nothing, and a symbol that already carries it is left alone.
+    """
+    suffix = get_config().get("yfinance_symbol_suffix", "")
+    if not suffix or not args or method not in _SYMBOL_ARG_METHODS:
+        return args
+    symbol = args[0]
+    if isinstance(symbol, str) and not symbol.upper().endswith(suffix.upper()):
+        return (symbol + suffix,) + args[1:]
+    return args

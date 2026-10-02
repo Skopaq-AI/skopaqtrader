@@ -6,8 +6,9 @@ lean on the instrument's stock. Code turns the answers into what the Sentiment
 Analyst reads: posts that are clearly about something else are dropped, and a
 stance count over the rest heads the source's block.
 
-Configured by TypeSafe's own SDK variables, ``TYPESAFE_API_KEY`` and
-``TYPESAFE_DEFAULT_MODEL``. Without a key nothing here runs; if any request fails, the source's posts are kept unscreened and the
+Configured by TypeSafe's own SDK variables, ``TYPESAFE_API_KEY``,
+``TYPESAFE_DEFAULT_MODEL`` and ``TYPESAFE_BASE_URL``. Without a key nothing
+here runs; if any request fails, the source's posts are kept unscreened and the
 block says screening was unavailable.
 """
 
@@ -23,7 +24,10 @@ from tradingagents.agents.context import resolve_instrument_identity
 
 logger = logging.getLogger(__name__)
 
-_URL = "https://api.typesafe.ai/v1/systemone"
+# Skopaq: the API root comes from TYPESAFE_BASE_URL, as in TypeSafe's SDK, so a
+# gateway serving Jev (e.g. OpenRouter, https://openrouter.ai/api) can be used.
+_BASE_URL = "https://api.typesafe.ai"
+_PATH = "/v1/systemone"
 _DEFAULT_MODEL = "jev-latest"
 _RETRY_STATUSES = (429, 529)    # rate limited, overloaded: back off and retry
 _TRANSIENT = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
@@ -83,7 +87,7 @@ def system_one(state, questions: dict) -> dict[str, dict]:
             time.sleep(retry_after if retry_after is not None else backoff * random.uniform(0.8, 1.2))
             backoff *= 2
         try:
-            response = requests.post(_URL, json=body, headers=headers, timeout=_TIMEOUT)
+            response = requests.post(_url(), json=body, headers=headers, timeout=_TIMEOUT)
         except requests.RequestException as exc:
             failure, retry_after = type(exc).__name__, None
             if isinstance(exc, _TRANSIENT):
@@ -95,6 +99,12 @@ def system_one(state, questions: dict) -> dict[str, dict]:
         if response.status_code not in _RETRY_STATUSES:
             break
     raise TypeSafeError(failure)
+
+
+def _url() -> str:
+    # Skopaq: resolved per request, so a value bridged after import still applies
+    base = os.environ.get("TYPESAFE_BASE_URL", "").strip() or _BASE_URL
+    return base.rstrip("/") + _PATH
 
 
 def _retry_after(response) -> float | None:
